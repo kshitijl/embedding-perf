@@ -1,8 +1,16 @@
+#include <torch/csrc/jit/api/module.h>
+#include <torch/script.h>
 #include <torch/torch.h>
 
 #include <iostream>
+#include <memory>
 
 int main() {
+    if (argc != 2) {
+        std::cerr << "usage: main <path-to-torchscript>\n";
+        return 1;
+    }
+
     torch::Tensor tensor = torch::rand({2, 3});
     std::cout << tensor << std::endl;
 
@@ -22,5 +30,15 @@ int main() {
         torch::Tensor tensor = torch::ones({2, 2}, device);
         std::cout << tensor << std::endl;
     }
+
+    torch::jit::script::Module module;
+    try {
+        module = torch::jit::load(argv[1]);
+    } catch (const c10::Error& e) {
+        std::cerr << "error loading model\n";
+        return 1;
+    }
+
+    std::cout << "ok\n";
     return 0;
 }

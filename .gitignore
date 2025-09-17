@@ -1,3 +1,4 @@
+*.pt
 build/
 .cache/
 compile_commands.json
