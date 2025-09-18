@@ -1,10 +1,3 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "sentence-transformers",
-#     "ipython"
-# ]
-# ///
 from sentence_transformers import SentenceTransformer
 import numpy as np
 import argparse

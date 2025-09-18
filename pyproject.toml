@@ -1,10 +1,11 @@
 [project]
-name = "generate-torchscript-models"
+name = "12-embedding-perf"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "ipython>=9.5.0",
     "sentence-transformers>=5.1.0",
     "torch>=2.8.0",
 ]
