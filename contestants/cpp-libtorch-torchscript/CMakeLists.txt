@@ -1,6 +1,20 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 project(main)
 
+# Set default build type if not specified
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Build type specific settings
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(STATUS "Building in Debug mode")
+    set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(STATUS "Building in Release mode")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -g -DNDEBUG")
+endif()
+
 include(FetchContent)
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")

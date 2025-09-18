@@ -54,12 +54,12 @@ class SentenceEmbedder {
 
             auto batch_input_ids = torch::stack(input_ids_list).to(device_);
             auto batch_attention_mask = torch::stack(attention_mask_list).to(device_);
-            auto batch_token_type_ids = torch::stack(token_type_ids_list).to(device_);
+            // auto batch_token_type_ids = torch::stack(token_type_ids_list).to(device_);
 
             c10::Dict<std::string, torch::Tensor> input_dict;
             input_dict.insert("input_ids", batch_input_ids);
             input_dict.insert("attention_mask", batch_attention_mask);
-            input_dict.insert("token_type_ids", batch_token_type_ids);
+            // input_dict.insert("token_type_ids", batch_token_type_ids);
 
             std::vector<torch::jit::IValue> inputs;
             inputs.push_back(input_dict);
@@ -96,6 +96,8 @@ std::vector<TokenizedInput> readTokenizedInputs(const std::string& filename) {
         throw std::runtime_error("Could not open file: " + filename);
     }
 
+    unsigned long max_length = 256;
+
     while (std::getline(file, line)) {
         if (line.empty()) continue;
 
@@ -108,6 +110,15 @@ std::vector<TokenizedInput> readTokenizedInputs(const std::string& filename) {
             auto attention_mask_nested =
                 j["attention_mask"].get<std::vector<std::vector<int64_t>>>();
             auto attention_mask_vec = attention_mask_nested[0];
+
+            // TODO this padding might not be correct for all sentence transformer models
+            if (input_ids_vec.size() > max_length) {
+                input_ids_vec.resize(max_length);
+                attention_mask_vec.resize(max_length);
+            } else {
+                input_ids_vec.resize(max_length, 0);
+                attention_mask_vec.resize(max_length, 0);
+            }
 
             std::vector<int64_t> token_type_ids_vec;
             if (j.contains("token_type_ids")) {
