@@ -5,7 +5,7 @@
 #include <iostream>
 #include <memory>
 
-int main() {
+int main(int argc, char** argv) {
     if (argc != 2) {
         std::cerr << "usage: main <path-to-torchscript>\n";
         return 1;

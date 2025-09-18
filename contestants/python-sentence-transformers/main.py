@@ -2,22 +2,19 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 import argparse
 from typing import List
-import IPython
 
 
-def embed(sentences: List[str], model: str) -> np.ndarray:
-    model = SentenceTransformer(model)
+def embed(sentences: List[str], model_name: str) -> np.ndarray:
+    model = SentenceTransformer(model_name)
     embeddings = model.encode(sentences)
-    IPython.embed()
     return embeddings
 
 
 def write_embeddings(embeddings: np.ndarray, embeddings_outfile: str):
     with open(embeddings_outfile, "w") as f:
-        IPython.embed()
         for embedding in embeddings:
             text_line = np.array2string(
-                embedding, max_line_width=np.inf, separator=" "
+                embedding, max_line_width=10000000, separator=" "
             )[1:-1].strip()
             f.write(text_line + "\n")
 
