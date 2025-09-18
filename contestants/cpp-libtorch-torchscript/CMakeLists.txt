@@ -19,7 +19,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 
 add_executable(main main.cpp)
-
+target_compile_options(main PRIVATE -Wall -Wextra -Werror -pedantic -Wshadow -Wconversion)
 target_link_libraries(main
   "${TORCH_LIBRARIES}"
   nlohmann_json::nlohmann_json
