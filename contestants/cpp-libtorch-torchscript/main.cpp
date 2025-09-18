@@ -4,8 +4,9 @@
 #include <torch/script.h>
 #include <torch/torch.h>
 
+#include <iomanip>
+#include <ios>
 #include <iostream>
-#include <memory>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -132,8 +133,44 @@ std::vector<TokenizedInput> readTokenizedInputs(const std::string& filename) {
 }
 
 void writeEmbeddings(const torch::Tensor& embeddings, const std::string& output_path) {
-    std::cout << embeddings << std::endl;
-    auto _ = output_path;
+    std::ofstream file(output_path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Could not open output file: " + output_path);
+    }
+    file << std::scientific << std::setprecision(8);
+
+    auto cpu_embeddings = embeddings.cpu().contiguous();
+
+    auto sizes = cpu_embeddings.sizes();
+    if (sizes.size() != 2) {
+        throw std::runtime_error("Expected 2D tensor, got " + std::to_string(sizes.size()) + "D");
+    }
+
+    const long long num_sentences = sizes[0];
+    const long long embedding_dim = sizes[1];
+
+    const float* data_ptr = cpu_embeddings.data_ptr<float>();
+
+    for (int i = 0; i < num_sentences; ++i) {
+        for (int j = 0; j < embedding_dim; ++j) {
+            float number = data_ptr[i * embedding_dim + j];
+
+            if (number >= 0.0) {
+                // Two spaces before positive numbers, one space before negative makes them line up
+                // nicely.
+                file << " ";
+            }
+            file << number;
+
+            if (j < embedding_dim - 1) {
+                file << " ";
+            }
+        }
+        file << "\n";
+    }
+
+    std::cout << "Embeddings written to: " << output_path << std::endl;
+    std::cout << "Shape: [" << num_sentences << ", " << embedding_dim << "]" << std::endl;
 }
 
 int main(int argc, char** argv) {
