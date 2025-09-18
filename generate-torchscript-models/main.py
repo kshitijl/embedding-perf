@@ -26,6 +26,10 @@ def gen_test_tokens(model: SentenceTransformer):
     return model.tokenize(gen_test_sentences())
 
 
+# Test tokens are passed in here rather than being generated because
+# tokenization turns of parallelism, which ends up reducing the error between
+# test and original to 0. Doing it this way gives a more faithful representation
+# of the real variance we should expect using the model in production.
 def test_exported_model(
     test_tokens,
     original_embeddings,
@@ -33,9 +37,6 @@ def test_exported_model(
     eps: float,
 ):
     test_sentences = gen_test_sentences()
-    # original_embeddings = original_model.encode(test_sentences)
-
-    # tokens = original_model.tokenize(test_sentences)
     test_model = torch.jit.load(exported_model_path)
     test_embeddings = test_model(test_tokens)["sentence_embedding"]
     for sentence, original_embedding, test_embedding in zip(
@@ -54,14 +55,7 @@ def test_exported_model(
     print(f"Test embeddings shape: {test_embeddings.shape}")
 
 
-def export_to_torchscript(model_name: str, output_path: str):
-    # dummy model
-    # m = opensearch_py_ml.ml_models.SentenceTransformerModel(
-    #     "sentence-transformers/all-MiniLM-L6-v2"
-    # )
-
-    # m.save_as_pt(model_name)
-
+def export_to_torchscript(model_name: str, output_dir: str):
     model = SentenceTransformer(model_name)
     sentences = [
         "The weather is lovely today.",
@@ -71,15 +65,6 @@ def export_to_torchscript(model_name: str, output_path: str):
     test_tokens = gen_test_tokens(model)
     original_embeddings = model.encode(gen_test_sentences())
 
-    # tokens = {k: v.to("mps") for (k, v) in tokens.items()}
-
-    # strict = False is necessary to avoid some warnings about returning a dict from forward
-    # traced_encode = torch.jit.trace_module(model, {"forward": tokens}, strict=False)
-    # torch.jit.save(traced_encode, output_path)
-    # traced_embeddings = (
-    #     traced_encode(tokens)["sentence_embedding"].cpu().detach().numpy()
-    # )
-
     # handle when model_max_length is unproperly defined in model's tokenizer (e.g. "intfloat/e5-small-v2")
     # (See PR #219 and https://github.com/huggingface/transformers/issues/14561 for more context)
     if model.tokenizer.model_max_length > model.get_max_seq_length():
@@ -87,18 +72,15 @@ def export_to_torchscript(model_name: str, output_path: str):
         print(
             f"The model_max_length is not properly defined in tokenizer_config.json. Setting it to be {model.tokenizer.model_max_length}"
         )
-    # save tokenizer.json in save_json_folder_name
-    # model.save(save_json_folder_path)
-    # super()._fill_null_truncation_field(
-    #     save_json_folder_path, model.tokenizer.model_max_length
-    # )
-    # convert to pt format will need to be in cpu,
-    # set the device to cpu, convert its input_ids and attention_mask in cpu and save as .pt format
+    model.save(output_dir)
+
     device = torch.device("cpu")
     cpu_model = model.to(device)
     features = cpu_model.tokenizer(
         sentences, return_tensors="pt", padding=True, truncation=True
     ).to(device)
+
+    # strict = False is necessary to avoid some warnings about returning a dict from forward
     compiled_model = torch.jit.trace(
         cpu_model,
         (
@@ -109,31 +91,63 @@ def export_to_torchscript(model_name: str, output_path: str):
         ),
         strict=False,
     )
+
+    output_path = os.path.join(output_dir, "model.pt")
     torch.jit.save(compiled_model, output_path)
     print("model file is saved to ", output_path)
 
     print("Testing exported model")
-    test_exported_model(test_tokens, original_embeddings, output_path, 1e-6)
+    test_exported_model(test_tokens, original_embeddings, output_path, 5e-6)
     print("Export successful!")
+
+
+def export_one_model(model_name: str, output_dir: str):
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    export_to_torchscript(model_name, output_dir)
+
+
+def export_one_model_args(args):
+    export_one_model(args.model_name, args.output_path)
+
+
+def batch(_args):
+    batch_inputs = [
+        ("sentence-transformers/all-MiniLM-L6-v2", "all-MiniLM-L6-v2"),
+        ("sentence-transformers/all-MiniLM-L12-v2", "all-MiniLM-L12-v2"),
+        ("sentence-transformers/all-mpnet-base-v2", "all-mpnet-base-v2"),
+        ("intfloat/e5-base-v2", "e5-base-v2"),
+        ("avsolatorio/GIST-Small-Embedding-v0", "GIST-Small-Embedding-v0"),
+        ("thenlper/gte-large", "gte-large"),
+    ]
+
+    for model, dir in batch_inputs:
+        export_one_model(model, os.path.join("output", dir))
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Convert sentence transformer to TorchScript"
     )
-    parser.add_argument(
+
+    subparsers = parser.add_subparsers(
+        title="subcommands", dest="command", required=True, help="Subcommand to run"
+    )
+
+    export_parser = subparsers.add_parser("export", help="Export one named model")
+
+    export_parser.add_argument(
         "model_name", help="Name or path of the sentence transformer model"
     )
-    parser.add_argument(
-        "output_path", help="Output path for the TorchScript model (.pt file)"
-    )
+    export_parser.add_argument("output_path", help="Output directory")
+    export_parser.set_defaults(func=export_one_model)
+
+    batch_parser = subparsers.add_parser("batch", help="Export the benchmark models")
+    batch_parser.set_defaults(func=batch)
 
     args = parser.parse_args()
-
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
-
-    export_to_torchscript(args.model_name, args.output_path)
+    args.func(args)
 
 
 if __name__ == "__main__":
