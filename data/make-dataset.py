@@ -24,10 +24,19 @@ def make_sentences(chars_per_sentence: int) -> List[str]:
 
 
 def write_sentences(sentences: List[str]):
-    sentences = sentences[:128]
+    bert_sentences = [
+        "The weather is lovely today.",
+        "It's so sunny outside!",
+        "He drove to the stadium.",
+    ]
+
+    sentences = [" ".join(sentence) for sentence in sentences]
+
+    sentences = bert_sentences + sentences[:128]
+
     with open("sentences.txt", "w") as f:
         for sentence in sentences:
-            f.write(" ".join(sentence) + "\n")
+            f.write(sentence + "\n")
 
 
 def main():
