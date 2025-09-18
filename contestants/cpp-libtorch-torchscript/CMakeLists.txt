@@ -1,14 +1,30 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 project(main)
 
+include(FetchContent)
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
 # Generate include dirs so the LSP clangd can find include dirs
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Fetch nlohmann_json
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG        v3.11.2
+)
+
+# Make the content available
+FetchContent_MakeAvailable(nlohmann_json)
+
 add_executable(main main.cpp)
-target_link_libraries(main "${TORCH_LIBRARIES}")
+
+target_link_libraries(main
+  "${TORCH_LIBRARIES}"
+  nlohmann_json::nlohmann_json
+)
+
 set_property(TARGET main PROPERTY CXX_STANDARD 17)
 
 # The following code block is suggested to be used on Windows.
