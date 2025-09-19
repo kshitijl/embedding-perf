@@ -2,7 +2,8 @@ use anyhow::{Error as E, Result};
 use clap::{Parser, ValueEnum};
 use serde::Deserialize;
 use std::ffi::CString;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
 use std::os::raw::{c_char, c_int, c_long};
 
 unsafe extern "C" {
@@ -141,7 +142,7 @@ impl TokenBatch {
             let mut attention_masks = input.attention_mask.into_iter().next().unwrap();
 
             input_ids.resize(max_length, 0);
-            attention_masks.resize(max_length, 1);
+            attention_masks.resize(max_length, 0);
 
             all_input_ids.push(input_ids);
             all_attention_masks.push(attention_masks);
@@ -154,6 +155,24 @@ impl TokenBatch {
     }
 }
 
+fn write_embeddings(path: &str, embeddings: &[Vec<f32>]) -> Result<()> {
+    let file = File::create(path)?;
+    let mut writer = BufWriter::new(file);
+
+    for embedding in embeddings {
+        for val in embedding {
+            if *val >= 0.0 {
+                write!(writer, "  {:.8e}", val)?;
+            } else {
+                write!(writer, " {:.8e}", val)?;
+            }
+        }
+        write!(writer, "\n")?;
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Device {
     Cpu,
@@ -163,7 +182,7 @@ enum Device {
 #[derive(Parser, Debug)]
 struct Args {
     /// Path to TorchScript model
-    #[arg(short, long)]
+    #[arg(long)]
     model_path: String,
 
     /// Path to jsonl file of tokenized input
@@ -181,6 +200,10 @@ struct Args {
     /// The size of each output vector produced by this model
     #[arg(short, long)]
     embedding_dim: usize,
+
+    /// Output embeddings to this file
+    #[arg(short, long)]
+    output_path: String,
 }
 
 fn main() -> Result<()> {
@@ -192,7 +215,8 @@ fn main() -> Result<()> {
 
     eprintln!("Computing embeddings");
     let embeddings = model.embed_batch(&input.input_ids, &input.attention_mask)?;
-    println!("Embeddings: {:?}", embeddings);
+    eprintln!("Writing embeddings to file");
+    write_embeddings(&args.output_path, &embeddings)?;
     eprintln!("Done");
     Ok(())
 }
