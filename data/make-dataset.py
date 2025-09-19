@@ -32,7 +32,7 @@ def write_sentences(sentences: List[str]):
 
     sentences = [" ".join(sentence) for sentence in sentences]
 
-    sentences = bert_sentences + sentences[:128]
+    sentences = bert_sentences + sentences[:1024]
 
     with open("sentences.txt", "w") as f:
         for sentence in sentences:
