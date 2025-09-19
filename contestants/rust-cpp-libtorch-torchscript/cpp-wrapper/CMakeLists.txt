@@ -18,7 +18,7 @@ find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
 # Create shared library
-add_library(embedder_wrapper SHARED 
+add_library(embedder_wrapper STATIC
     embedder_wrapper.cpp
 )
 
