@@ -1,0 +1,98 @@
+[
+  {
+    "contestant": "python-sentence-transformers",
+    "model": "all-MiniLM-L6-v2",
+    "device": "mps",
+    "seq_length": 128,
+    "mean_error": 0.0,
+    "median_error": 0.0,
+    "max_error": 0.0,
+    "min_error": 0.0,
+    "std_error": 0.0,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-sentence-transformers",
+    "model": "all-MiniLM-L6-v2",
+    "device": "mps",
+    "seq_length": 64,
+    "mean_error": 0.0,
+    "median_error": 0.0,
+    "max_error": 0.0,
+    "min_error": 0.0,
+    "std_error": 0.0,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-sentence-transformers",
+    "model": "all-MiniLM-L6-v2",
+    "device": "mps",
+    "seq_length": 32,
+    "mean_error": 0.0,
+    "median_error": 0.0,
+    "max_error": 0.0,
+    "min_error": 0.0,
+    "std_error": 0.0,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-sentence-transformers",
+    "model": "all-MiniLM-L6-v2",
+    "device": "mps",
+    "seq_length": 256,
+    "mean_error": 0.0,
+    "median_error": 0.0,
+    "max_error": 0.0,
+    "min_error": 0.0,
+    "std_error": 0.0,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-sentence-transformers",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 128,
+    "mean_error": 1.6039301850062774e-07,
+    "median_error": 1.5650000000089204e-07,
+    "max_error": 2.765999999997798e-07,
+    "min_error": 1.0060000000047808e-07,
+    "std_error": 2.6862253417565227e-08,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-sentence-transformers",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 64,
+    "mean_error": 1.5750033602728786e-07,
+    "median_error": 1.52800000000064e-07,
+    "max_error": 3.0550000000573174e-07,
+    "min_error": 9.592000000009648e-08,
+    "std_error": 2.64965480145049e-08,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-sentence-transformers",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 32,
+    "mean_error": 1.5082722901661893e-07,
+    "median_error": 1.489999999979008e-07,
+    "max_error": 2.570000000035044e-07,
+    "min_error": 9.67999999983149e-08,
+    "std_error": 2.336658351121646e-08,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-sentence-transformers",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 256,
+    "mean_error": 1.6796165803327165e-07,
+    "median_error": 1.6390000000254812e-07,
+    "max_error": 2.9809999999713677e-07,
+    "min_error": 1.0430000001171447e-07,
+    "std_error": 2.8501617786821603e-08,
+    "num_vectors": 1027
+  }
+]

@@ -4,7 +4,7 @@ import numpy as np
 import os
 
 TOKENIZATION_MAX_LENGTH = 256
-TRUNCATION_SIZES_FOR_EMBEDDINGS = [32, 64, 128, 256]
+MAX_SEQ_LENGTHS = [32, 64, 128, 256]
 
 script_path = os.path.abspath(__file__)
 script_directory = os.path.dirname(script_path)
@@ -34,7 +34,7 @@ def generate_reference_embeddings(model_name: str, output_dir: str):
 
     batch_size = 64
 
-    for max_length in TRUNCATION_SIZES_FOR_EMBEDDINGS:
+    for max_length in MAX_SEQ_LENGTHS:
         print(f"    max length {max_length}")
         model.max_seq_length = max_length
 

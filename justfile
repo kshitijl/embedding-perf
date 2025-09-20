@@ -1,7 +1,10 @@
 LIBTORCH_PATH := "/Users/kshitijlauria/Downloads/libtorch"
 BUILD_DIR := "contestants/rust-cpp-libtorch-torchscript/cpp-wrapper/build"
 
-default: generate_reference_data
+default: evaluate
+
+evaluate:
+    uv run --directory results evaluate-correctness.py
 
 generate_reference_data:
     uv run --directory data tokenize-and-reference-embeddings.py
