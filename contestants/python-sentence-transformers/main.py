@@ -5,15 +5,20 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 import argparse
 from typing import List
+import time
+import json
 
 
 def embed(
-    sentences: List[str], model_name: str, device: str, max_seq_length: int
+    model: SentenceTransformer,
+    sentences: List[str],
+    device: str,
+    max_seq_length: int,
+    batch_size: int,
 ) -> np.ndarray:
-    model = SentenceTransformer(model_name, device=device)
     model.max_seq_length = max_seq_length  # type:ignore
     print(f"max seq len is {model.max_seq_length}")
-    embeddings = model.encode(sentences, show_progress_bar=True)
+    embeddings = model.encode(sentences, batch_size=batch_size, show_progress_bar=True)
     return embeddings
 
 
@@ -38,15 +43,55 @@ def main():
     parser.add_argument("--model", required=True)
     parser.add_argument("--device", required=True)
     parser.add_argument("--max-seq-length", type=int, required=True)
+    parser.add_argument("--batch-size", type=int, required=True)
+    parser.add_argument("--num-runs", type=int, default=1)
     args = parser.parse_args()
+
+    if args.num_runs < 1:
+        raise ValueError(f"num runs must be at least 1, given {args.num_runs}")
+
+    start_total = time.time()
+    model = SentenceTransformer(args.model, device=args.device)
 
     outfile = Path(
         f"output/{args.model}/{args.device}/embeddings-{args.max_seq_length}.txt"
     )
+    benchmark_outfile = Path("output/benchmark_results.jsonl")
     os.makedirs(outfile.parent, exist_ok=True)
 
     sentences = open(args.sentences).readlines()
-    embeddings = embed(sentences, args.model, args.device, args.max_seq_length)
+
+    run_times = []
+    embeddings = None
+
+    for i in range(args.num_runs):
+        start_run = time.time()
+        embeddings = embed(
+            model,
+            sentences,
+            args.device,
+            args.max_seq_length,
+            args.batch_size,
+        )
+        end_run = time.time()
+        run_times.append(end_run - start_run)
+
+    end_total = time.time()
+    total_time = end_total - start_total
+
+    benchmark_result = {
+        "model": args.model,
+        "device": args.device,
+        "max_seq_length": args.max_seq_length,
+        "batch_size": args.batch_size,
+        "total_time": total_time,
+        "run_times": run_times,
+    }
+
+    with open(benchmark_outfile, "a") as f:
+        f.write(json.dumps(benchmark_result) + "\n")
+
+    assert embeddings is not None
     write_embeddings(embeddings, outfile)
 
 
