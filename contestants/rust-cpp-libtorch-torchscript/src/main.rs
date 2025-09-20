@@ -1,13 +1,14 @@
 use anyhow::{Error as E, Result};
 use clap::{Parser, ValueEnum};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::ffi::CString;
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::os::raw::{c_char, c_int, c_long};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 unsafe extern "C" {
     fn embedder_load_model(model_path: *const c_char, use_mps: c_int) -> *mut std::ffi::c_void;
@@ -16,8 +17,9 @@ unsafe extern "C" {
         model_handle: *mut std::ffi::c_void,
         input_ids: *const i64,
         attention_mask: *const i64,
-        batch_size: c_long,
+        total_samples: c_long,
         seq_length: c_long,
+        processing_batch_size: c_long,
         output_embeddings: *mut f32,
         output_buffer_size_in_bytes: c_long,
     ) -> c_long;
@@ -53,12 +55,13 @@ impl EmbedderModel {
         &self,
         input_ids: &[Vec<i64>],
         attention_masks: &[Vec<i64>],
+        processing_batch_size: usize,
     ) -> Result<Vec<Vec<f32>>> {
         if input_ids.is_empty() {
             return Ok(vec![]);
         }
 
-        let batch_size = input_ids.len();
+        let total_samples = input_ids.len();
         let seq_length = input_ids[0].len();
 
         for (ids, mask) in input_ids.iter().zip(attention_masks.iter()) {
@@ -70,7 +73,7 @@ impl EmbedderModel {
         let flat_input_ids: Vec<i64> = input_ids.iter().flatten().copied().collect();
         let flat_attention_mask: Vec<i64> = attention_masks.iter().flatten().copied().collect();
 
-        let output_size = batch_size * self.embedding_dim;
+        let output_size = total_samples * self.embedding_dim;
         let mut output = vec![0.0f32; output_size];
         let output_buffer_size_in_bytes = output_size * size_of::<f32>();
 
@@ -79,8 +82,9 @@ impl EmbedderModel {
                 self.handle,
                 flat_input_ids.as_ptr(),
                 flat_attention_mask.as_ptr(),
-                batch_size as c_long,
+                total_samples as c_long,
                 seq_length as c_long,
+                processing_batch_size as c_long,
                 output.as_mut_ptr(),
                 output_buffer_size_in_bytes as c_long,
             )
@@ -108,6 +112,16 @@ impl Drop for EmbedderModel {
             }
         }
     }
+}
+
+#[derive(Serialize)]
+struct BenchmarkResult {
+    model: String,
+    device: String,
+    max_seq_length: usize,
+    batch_size: usize,
+    total_time: f64,
+    run_times: Vec<f64>,
 }
 
 #[derive(Debug)]
@@ -216,6 +230,14 @@ struct Args {
     /// The size of each output vector produced by this model
     #[arg(short, long)]
     embedding_dim: usize,
+
+    /// Batch size for processing
+    #[arg(long)]
+    batch_size: usize,
+
+    /// Number of runs for benchmarking
+    #[arg(long, default_value = "1")]
+    num_runs: usize,
 }
 
 fn get_repo_root() -> PathBuf {
@@ -253,6 +275,13 @@ fn main() -> Result<()> {
     let repo_root = get_repo_root();
 
     let args = Args::parse();
+
+    if args.num_runs < 1 {
+        return Err(E::msg(format!("num runs must be at least 1, given {}", args.num_runs)));
+    }
+
+    let start_total = Instant::now();
+
     let output_path = get_output_path(&args);
     let input_tokens_path = get_input_tokens_path(&args, &repo_root);
     let model_path = get_torchscript_model_path(&args, &repo_root);
@@ -262,10 +291,42 @@ fn main() -> Result<()> {
     eprintln!("Parsing input tokens");
     let input = TokenBatch::load(&input_tokens_path, args.max_seq_length)?;
 
-    eprintln!("Computing embeddings");
-    let embeddings = model.embed_batch(&input.input_ids, &input.attention_mask)?;
+    let mut run_times = Vec::new();
+    let mut embeddings = None;
+
+    for i in 0..args.num_runs {
+        eprintln!("Run {}/{}", i + 1, args.num_runs);
+        let start_run = Instant::now();
+        embeddings = Some(model.embed_batch(&input.input_ids, &input.attention_mask, args.batch_size)?);
+        let end_run = Instant::now();
+        run_times.push(end_run.duration_since(start_run).as_secs_f64());
+    }
+
+    let end_total = Instant::now();
+    let total_time = end_total.duration_since(start_total).as_secs_f64();
+
+    let benchmark_result = BenchmarkResult {
+        model: args.model.clone(),
+        device: args.device.to_string(),
+        max_seq_length: args.max_seq_length,
+        batch_size: args.batch_size,
+        total_time,
+        run_times,
+    };
+
+    let benchmark_path = PathBuf::from("output/benchmark_results.jsonl");
+    if let Some(parent) = benchmark_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(benchmark_path)?;
+    writeln!(file, "{}", serde_json::to_string(&benchmark_result)?)?;
+
     eprintln!("Writing embeddings to file");
-    write_embeddings(&output_path, &embeddings)?;
+    write_embeddings(&output_path, &embeddings.unwrap())?;
     eprintln!("Done");
     Ok(())
 }

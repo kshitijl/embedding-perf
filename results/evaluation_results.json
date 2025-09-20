@@ -64,11 +64,11 @@
     "model": "all-MiniLM-L6-v2",
     "device": "mps",
     "seq_length": 128,
-    "mean_error": 3.1072151913632567e-09,
+    "mean_error": 3.8569620254869034e-10,
     "median_error": 0.0,
     "max_error": 1.3131000000006499e-07,
     "min_error": 0.0,
-    "std_error": 8.508778368190398e-09,
+    "std_error": 6.029607086167623e-09,
     "num_vectors": 1027
   },
   {
@@ -76,11 +76,11 @@
     "model": "all-MiniLM-L6-v2",
     "device": "mps",
     "seq_length": 64,
-    "mean_error": 2.7790749775900703e-09,
+    "mean_error": 3.7985394357197533e-10,
     "median_error": 0.0,
     "max_error": 1.3131000000006499e-07,
     "min_error": 0.0,
-    "std_error": 8.623848325854168e-09,
+    "std_error": 6.0581707304397744e-09,
     "num_vectors": 1027
   },
   {
@@ -88,11 +88,11 @@
     "model": "all-MiniLM-L6-v2",
     "device": "mps",
     "seq_length": 32,
-    "mean_error": 3.078003896709402e-09,
+    "mean_error": 3.691431354119634e-10,
     "median_error": 0.0,
     "max_error": 1.3131000000006499e-07,
     "min_error": 0.0,
-    "std_error": 8.377279936528576e-09,
+    "std_error": 6.005645692386737e-09,
     "num_vectors": 1027
   },
   {
@@ -100,11 +100,11 @@
     "model": "all-MiniLM-L6-v2",
     "device": "mps",
     "seq_length": 256,
-    "mean_error": 3.087740995440845e-09,
+    "mean_error": 3.8666991235562125e-10,
     "median_error": 0.0,
     "max_error": 1.3131000000006499e-07,
     "min_error": 0.0,
-    "std_error": 8.373230738588092e-09,
+    "std_error": 6.047685033613216e-09,
     "num_vectors": 1027
   },
   {
@@ -141,18 +141,6 @@
     "max_error": 2.5699999999656553e-07,
     "min_error": 8.760000000038182e-08,
     "std_error": 2.300535782744606e-08,
-    "num_vectors": 1027
-  },
-  {
-    "contestant": "rust-cpp-libtorch-torchscript",
-    "model": "all-MiniLM-L6-v2",
-    "device": "cpu",
-    "seq_length": 256,
-    "mean_error": 1.623169174295291e-07,
-    "median_error": 1.6019999999825063e-07,
-    "max_error": 3.166999999956732e-07,
-    "min_error": 1.0060000000047808e-07,
-    "std_error": 2.8488549332228245e-08,
     "num_vectors": 1027
   },
   {

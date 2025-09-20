@@ -54,8 +54,8 @@ void embedder_free_model(void* model_handle) {
 }
 
 int embedder_embed(void* model_handle, const int64_t* input_ids, const int64_t* attention_mask,
-                   int batch_size, int seq_length, float* output_embeddings,
-                   int64_t output_buffer_size_in_bytes) {
+                   int total_samples, int seq_length, int processing_batch_size,
+                   float* output_embeddings, int64_t output_buffer_size_in_bytes) {
     if (!model_handle || !input_ids || !attention_mask || !output_embeddings) {
         std::cerr << "Null pointer passed to embed" << std::endl;
         return -1;
@@ -66,48 +66,68 @@ int embedder_embed(void* model_handle, const int64_t* input_ids, const int64_t* 
 
         auto opts = torch::TensorOptions().dtype(torch::kLong);
 
-        std::cerr << "Making input tensors\n";
-        torch::Tensor input_ids_tensor =
-            torch::from_blob(const_cast<int64_t*>(input_ids), {batch_size, seq_length}, opts)
+        std::cerr << "Making full input tensors\n";
+        torch::Tensor full_input_ids =
+            torch::from_blob(const_cast<int64_t*>(input_ids), {total_samples, seq_length}, opts)
                 .to(wrapper->device);
 
-        torch::Tensor attention_mask_tensor =
-            torch::from_blob(const_cast<int64_t*>(attention_mask), {batch_size, seq_length}, opts)
-                .to(wrapper->device);
+        torch::Tensor full_attention_mask = torch::from_blob(const_cast<int64_t*>(attention_mask),
+                                                             {total_samples, seq_length}, opts)
+                                                .to(wrapper->device);
 
-        std::cerr << "Making input dictionary\n";
-        c10::Dict<std::string, torch::Tensor> input_dict;
-        input_dict.insert("input_ids", input_ids_tensor);
-        input_dict.insert("attention_mask", attention_mask_tensor);
-
-        std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(input_dict);
+        std::vector<torch::Tensor> output_batches;
+        int embedding_dim = -1;
 
         torch::NoGradGuard no_grad;
-        std::cerr << "Calling the model\n";
-        auto output = wrapper->model.forward(inputs);
 
-        torch::Tensor embeddings;
+        for (int start_idx = 0; start_idx < total_samples; start_idx += processing_batch_size) {
+            int current_batch_size = std::min(processing_batch_size, total_samples - start_idx);
 
-        std::cerr << "Getting the output out\n";
-        if (output.isGenericDict()) {
-            auto output_dict = output.toGenericDict();
-            embeddings = output_dict.at("sentence_embedding").toTensor();
-        } else if (output.isTensor()) {
-            embeddings = output.toTensor();
-        } else if (output.isTuple()) {
-            auto tuple_output = output.toTuple();
-            embeddings = tuple_output->elements()[0].toTensor();
-        } else {
-            std::cerr << "Unexpected output type from model" << std::endl;
-            return -3;
+            std::cerr << "Processing batch " << start_idx / processing_batch_size + 1
+                      << ", samples " << start_idx << "-" << start_idx + current_batch_size - 1
+                      << "\n";
+
+            torch::Tensor batch_input_ids =
+                full_input_ids.slice(0, start_idx, start_idx + current_batch_size);
+            torch::Tensor batch_attention_mask =
+                full_attention_mask.slice(0, start_idx, start_idx + current_batch_size);
+
+            c10::Dict<std::string, torch::Tensor> input_dict;
+            input_dict.insert("input_ids", batch_input_ids);
+            input_dict.insert("attention_mask", batch_attention_mask);
+
+            std::vector<torch::jit::IValue> inputs;
+            inputs.push_back(input_dict);
+
+            auto output = wrapper->model.forward(inputs);
+
+            torch::Tensor embeddings;
+            if (output.isGenericDict()) {
+                auto output_dict = output.toGenericDict();
+                embeddings = output_dict.at("sentence_embedding").toTensor();
+            } else if (output.isTensor()) {
+                embeddings = output.toTensor();
+            } else if (output.isTuple()) {
+                auto tuple_output = output.toTuple();
+                embeddings = tuple_output->elements()[0].toTensor();
+            } else {
+                std::cerr << "Unexpected output type from model" << std::endl;
+                return -3;
+            }
+
+            if (embedding_dim == -1) {
+                embedding_dim = embeddings.size(1);
+            }
+
+            output_batches.push_back(embeddings.cpu());
         }
 
-        std::cerr << "Copying output into provided buffer\n";
-        embeddings = embeddings.cpu().contiguous();
+        std::cerr << "Concatenating output batches\n";
+        torch::Tensor final_embeddings = torch::cat(output_batches, 0).cpu().contiguous();
 
-        size_t num_elements = embeddings.numel();
-        const float* data_ptr = embeddings.data_ptr<float>();
+        std::cerr << "Copying output into provided buffer\n";
+        size_t num_elements = final_embeddings.numel();
+        const float* data_ptr = final_embeddings.data_ptr<float>();
         size_t num_bytes = num_elements * sizeof(float);
         if (num_bytes > output_buffer_size_in_bytes) {
             std::cerr << "Output buffer too small. Need " << num_bytes << " bytes, got "
