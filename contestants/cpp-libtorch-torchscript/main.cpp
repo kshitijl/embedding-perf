@@ -34,7 +34,7 @@ class SentenceEmbedder {
         }
 
         try {
-            model_ = torch::jit::load(model_path, torch::kMPS);
+            model_ = torch::jit::load(model_path, device_);
             model_.eval();
         } catch (const c10::Error& e) {
             std::cerr << "error loading model: " << e.what() << "\n";

@@ -1,5 +1,5 @@
-LIBTORCH_PATH := "/Users/kshitijlauria/Downloads/libtorch"
-BUILD_DIR := "contestants/rust-cpp-libtorch-torchscript/cpp-wrapper/build"
+LIBTORCH_PATH := "/opt/homebrew/opt/pytorch"
+BUILD_DIR := "contestants/cpp-libtorch-torchscript/build"
 
 default: evaluate
 
