@@ -2,9 +2,12 @@ use anyhow::{Error as E, Result};
 use clap::{Parser, ValueEnum};
 use serde::Deserialize;
 use std::ffi::CString;
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::os::raw::{c_char, c_int, c_long};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 unsafe extern "C" {
     fn embedder_load_model(model_path: *const c_char, use_mps: c_int) -> *mut std::ffi::c_void;
@@ -26,8 +29,8 @@ struct EmbedderModel {
 }
 
 impl EmbedderModel {
-    fn load(model_path: &str, device: Device, embedding_dim: usize) -> Result<Self> {
-        let c_path = CString::new(model_path).map_err(E::msg)?;
+    fn load(model_path: &Path, device: Device, embedding_dim: usize) -> Result<Self> {
+        let c_path = CString::new(model_path.to_string_lossy().as_ref()).map_err(E::msg)?;
 
         let use_mps = match device {
             Device::Mps => 1,
@@ -114,7 +117,7 @@ struct TokenBatch {
 }
 
 impl TokenBatch {
-    fn load(path: &str, max_length: usize) -> Result<Self> {
+    fn load(path: &Path, max_length: usize) -> Result<Self> {
         #[derive(Debug, Deserialize)]
         struct TokenizedInput {
             input_ids: Vec<Vec<i64>>,
@@ -141,6 +144,16 @@ impl TokenBatch {
             let mut input_ids = input.input_ids.into_iter().next().unwrap();
             let mut attention_masks = input.attention_mask.into_iter().next().unwrap();
 
+            if input_ids.len() > max_length {
+                input_ids.truncate(max_length - 1);
+                attention_masks.truncate(max_length - 1);
+
+                // Add [SEP] token since we truncated
+                // TODO this only works for BERT tokenizers
+                input_ids.push(102);
+                attention_masks.push(1);
+            }
+
             input_ids.resize(max_length, 0);
             attention_masks.resize(max_length, 0);
 
@@ -155,7 +168,7 @@ impl TokenBatch {
     }
 }
 
-fn write_embeddings(path: &str, embeddings: &[Vec<f32>]) -> Result<()> {
+fn write_embeddings(path: &Path, embeddings: &[Vec<f32>]) -> Result<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
 
@@ -179,19 +192,22 @@ enum Device {
     Mps,
 }
 
+impl fmt::Display for Device {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = self.to_possible_value().unwrap().get_name().to_string();
+        write!(f, "{}", name)
+    }
+}
+
 #[derive(Parser, Debug)]
 struct Args {
-    /// Path to TorchScript model
+    /// Model name
     #[arg(long)]
-    model_path: String,
-
-    /// Path to jsonl file of tokenized input
-    #[arg(short, long)]
-    input: String,
+    model: String,
 
     /// Truncate each tokenized input to this many tokens
     #[arg(short, long)]
-    max_length: usize,
+    max_seq_length: usize,
 
     /// Whether the model uses MPS. Traced TorchScript models are device-specific.
     #[arg(short, long)]
@@ -200,23 +216,56 @@ struct Args {
     /// The size of each output vector produced by this model
     #[arg(short, long)]
     embedding_dim: usize,
+}
 
-    /// Output embeddings to this file
-    #[arg(short, long)]
-    output_path: String,
+fn get_repo_root() -> PathBuf {
+    let repo_root = Command::new("git")
+        .args(&["rev-parse", "--show-toplevel"])
+        .output()
+        .unwrap()
+        .stdout;
+    PathBuf::from(String::from_utf8(repo_root).unwrap().trim())
+}
+
+fn get_output_path(args: &Args) -> PathBuf {
+    let output_path = format!(
+        "output/{}/{}/embeddings-{}.txt",
+        args.model, args.device, args.max_seq_length
+    );
+    let parent = std::path::Path::new(&output_path).parent().unwrap();
+    fs::create_dir_all(parent).unwrap();
+
+    PathBuf::from(output_path)
+}
+
+fn get_torchscript_model_path(args: &Args, repo_root: &Path) -> PathBuf {
+    repo_root.join(format!("torchscript-models/output/{}/model.pt", args.model))
+}
+
+fn get_input_tokens_path(args: &Args, repo_root: &Path) -> PathBuf {
+    repo_root.join(format!(
+        "data/reference-output/{}/tokenized.txt",
+        args.model
+    ))
 }
 
 fn main() -> Result<()> {
+    let repo_root = get_repo_root();
+
     let args = Args::parse();
+    let output_path = get_output_path(&args);
+    let input_tokens_path = get_input_tokens_path(&args, &repo_root);
+    let model_path = get_torchscript_model_path(&args, &repo_root);
+
     eprintln!("Loading model");
-    let model = EmbedderModel::load(&args.model_path, args.device, args.embedding_dim)?;
+    let model = EmbedderModel::load(&model_path, args.device, args.embedding_dim)?;
     eprintln!("Parsing input tokens");
-    let input = TokenBatch::load(&args.input, args.max_length)?;
+    let input = TokenBatch::load(&input_tokens_path, args.max_seq_length)?;
 
     eprintln!("Computing embeddings");
     let embeddings = model.embed_batch(&input.input_ids, &input.attention_mask)?;
     eprintln!("Writing embeddings to file");
-    write_embeddings(&args.output_path, &embeddings)?;
+    write_embeddings(&output_path, &embeddings)?;
     eprintln!("Done");
     Ok(())
 }
