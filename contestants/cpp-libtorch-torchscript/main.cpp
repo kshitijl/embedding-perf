@@ -4,10 +4,15 @@
 #include <torch/script.h>
 #include <torch/torch.h>
 
+#include <CLI/CLI.hpp>
+#include <cstdlib>
+#include <filesystem>
 #include <iomanip>
 #include <ios>
 #include <iostream>
+#include <memory>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 
 using json = nlohmann::json;
 
@@ -88,15 +93,14 @@ class SentenceEmbedder {
     }
 };
 
-std::vector<TokenizedInput> readTokenizedInputs(const std::string& filename) {
+std::vector<TokenizedInput> readTokenizedInputs(const std::string& filename,
+                                                unsigned long max_length) {
     std::vector<TokenizedInput> answer;
     std::ifstream file(filename);
     std::string line;
     if (!file.is_open()) {
         throw std::runtime_error("Could not open file: " + filename);
     }
-
-    unsigned long max_length = 256;
 
     while (std::getline(file, line)) {
         if (line.empty()) continue;
@@ -113,12 +117,18 @@ std::vector<TokenizedInput> readTokenizedInputs(const std::string& filename) {
 
             // TODO this padding might not be correct for all sentence transformer models
             if (input_ids_vec.size() > max_length) {
-                input_ids_vec.resize(max_length);
-                attention_mask_vec.resize(max_length);
-            } else {
-                input_ids_vec.resize(max_length, 0);
-                attention_mask_vec.resize(max_length, 0);
+                // Truncate to leave room for SEP token
+                input_ids_vec.resize(max_length - 1);
+                attention_mask_vec.resize(max_length - 1);
+
+                // Add SEP token (102) since we truncated
+                input_ids_vec.push_back(102);
+                attention_mask_vec.push_back(1);
             }
+
+            // Pad to max_length (works whether we truncated or not)
+            input_ids_vec.resize(max_length, 0);
+            attention_mask_vec.resize(max_length, 0);
 
             std::vector<int64_t> token_type_ids_vec;
             if (j.contains("token_type_ids")) {
@@ -184,27 +194,86 @@ void writeEmbeddings(const torch::Tensor& embeddings, const std::string& output_
     std::cout << "Shape: [" << num_sentences << ", " << embedding_dim << "]" << std::endl;
 }
 
+std::string getRepoRoot() {
+    std::string result;
+
+    // Execute git command
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen("git rev-parse --show-toplevel", "r"),
+                                                  pclose);
+
+    if (!pipe) {
+        throw std::runtime_error("Failed to run git command");
+    }
+
+    // Read output
+    char buffer[128];
+    while (fgets(buffer, sizeof buffer, pipe.get()) != nullptr) {
+        result += buffer;
+    }
+
+    // Remove trailing newline
+    if (!result.empty() && result.back() == '\n') {
+        result.pop_back();
+    }
+
+    if (result.empty()) {
+        throw std::runtime_error("Git command returned empty result");
+    }
+
+    return result;
+}
+
+std::string getOutputPath(const std::string& model, const std::string& device,
+                          unsigned long max_seq_length) {
+    std::string path =
+        "output/" + model + "/" + device + "/embeddings-" + std::to_string(max_seq_length) + ".txt";
+
+    // Create directories if they don't exist
+    std::filesystem::path fs_path(path);
+    std::filesystem::create_directories(fs_path.parent_path());
+
+    return path;
+}
+
+std::string getTorchscriptModelPath(const std::string& model, const std::string& repo_root) {
+    return repo_root + "/torchscript-models/output/" + model + "/model.pt";
+}
+
+std::string getInputTokensPath(const std::string& model, const std::string& repo_root) {
+    return repo_root + "/data/reference-output/" + model + "/tokenized.txt";
+}
+
 int main(int argc, char** argv) {
-    if (argc != 5) {
-        std::cerr << "usage: main <path-to-torchscript> <tokens> <output> <device>\n";
+    CLI::App app{"Sentence Transformer Embedder"};
+
+    std::string model;
+    std::string device;
+    unsigned long max_seq_length;
+    int embedding_dim;
+
+    app.add_option("--model", model, "Model name")->required();
+    app.add_option("--device", device, "Device (cpu or mps)")->required();
+    app.add_option("--max-seq-length", max_seq_length, "Max sequence length")->required();
+    app.add_option("--embedding-dim", embedding_dim, "Embedding dimension")->required();
+
+    CLI11_PARSE(app, argc, argv);
+
+    // Validate device
+    if (device != "cpu" && device != "mps") {
+        std::cerr << "Device must be 'cpu' or 'mps'" << std::endl;
         return 1;
     }
-    const std::string model_path = argv[1];
-    const std::string token_path = argv[2];
-    const std::string output_path = argv[3];
-    const std::string device = argv[4];
 
-    bool use_mps = false;
-    if (device == "cpu") {
-        use_mps = false;
-    } else if (device == "mps") {
-        use_mps = true;
-    } else {
-        std::cerr << "Device must be one of cpu, mps";
-        return 1;
-    }
+    bool use_mps = (device == "mps");
 
-    auto tokenized_inputs = readTokenizedInputs(token_path);
+    std::string repo_root = getRepoRoot();
+    std::string output_path = getOutputPath(model, device, max_seq_length);
+    std::string model_path = getTorchscriptModelPath(model, repo_root);
+    std::string token_path = getInputTokensPath(model, repo_root);
+
+    std::cout << "Repo root: " << repo_root << std::endl;
+
+    auto tokenized_inputs = readTokenizedInputs(token_path, max_seq_length);
     std::cout << " input_ids shape: " << tokenized_inputs[0].input_ids.sizes()
               << ", attention mask shape: " << tokenized_inputs[0].attention_mask.sizes() << "\n";
 

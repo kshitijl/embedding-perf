@@ -22,21 +22,30 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 # Generate include dirs so the LSP clangd can find include dirs
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Fetch nlohmann_json
+# nlohmann_json
 FetchContent_Declare(
   nlohmann_json
   GIT_REPOSITORY https://github.com/nlohmann/json.git
   GIT_TAG        v3.11.2
 )
 
-# Make the content available
 FetchContent_MakeAvailable(nlohmann_json)
+
+# CLI11
+FetchContent_Declare(
+  CLI11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+  GIT_TAG        v2.3.2
+)
+
+FetchContent_MakeAvailable(CLI11)
 
 add_executable(main main.cpp)
 target_compile_options(main PRIVATE -Wall -Wextra -Werror -pedantic -Wshadow -Wconversion)
 target_link_libraries(main
   "${TORCH_LIBRARIES}"
   nlohmann_json::nlohmann_json
+  CLI11::CLI11
 )
 
 set_property(TARGET main PROPERTY CXX_STANDARD 17)
