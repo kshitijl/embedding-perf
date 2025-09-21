@@ -71,6 +71,7 @@ def embed(
         # 3. Run inference
         model_outputs = session.run(None, model_inputs)
         last_hidden_state = model_outputs[0]
+        assert isinstance(last_hidden_state, np.ndarray)
 
         # 4. Perform pooling and normalization
         pooled_embeddings = mean_pooling(last_hidden_state, attention_mask)

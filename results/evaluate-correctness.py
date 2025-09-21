@@ -74,16 +74,29 @@ def find_contestant_embeddings(contestant_name: str) -> List[dict]:
 
             # Find embedding files
             for embedding_file in device_dir.glob("embeddings-*.txt"):
-                # Extract sequence length from filename
+                # Extract sequence length and batch size from filename
                 filename = embedding_file.name
-                seq_length = filename.replace("embeddings-", "").replace(".txt", "")
+                # Remove prefix and suffix
+                name_part = filename.replace("embeddings-", "").replace(".txt", "")
+
+                # Parse seq_length and batch_size
+                if "-" in name_part:
+                    # New format: embeddings-{seqlen}-{batchsize}.txt
+                    parts = name_part.split("-")
+                    seq_length = int(parts[0])
+                    batch_size = int(parts[1])
+                else:
+                    # Legacy format: embeddings-{seqlen}.txt
+                    seq_length = int(name_part)
+                    batch_size = "unknown"
 
                 embeddings_files.append(
                     {
                         "contestant": contestant_name,
                         "model": model_name,
                         "device": device_name,
-                        "seq_length": int(seq_length),
+                        "seq_length": seq_length,
+                        "batch_size": batch_size,
                         "file_path": embedding_file,
                     }
                 )
@@ -114,7 +127,7 @@ def evaluate_all_contestants() -> List[dict]:
 
         for embedding_info in embedding_files:
             print(
-                f"  Processing {embedding_info['model']} on {embedding_info['device']} with seq_length {embedding_info['seq_length']}"
+                f"  Processing {embedding_info['model']} on {embedding_info['device']} with seq_length {embedding_info['seq_length']} batch_size {embedding_info['batch_size']}"
             )
 
             # Find corresponding reference
@@ -143,6 +156,7 @@ def evaluate_all_contestants() -> List[dict]:
                     "model": embedding_info["model"],
                     "device": embedding_info["device"],
                     "seq_length": embedding_info["seq_length"],
+                    "batch_size": embedding_info["batch_size"],
                     "mean_error": float(np.mean(max_abs_diffs)),
                     "median_error": float(np.median(max_abs_diffs)),
                     "max_error": float(np.max(max_abs_diffs)),
@@ -309,11 +323,11 @@ def main():
     contestants = set(r["contestant"] for r in results)
     for contestant in contestants:
         contestant_results = [r for r in results if r["contestant"] == contestant]
-        mean_errors = [r["mean_error"] for r in contestant_results]
+        max_errors = [r["max_error"] for r in contestant_results]
         print(f"\n{contestant}:")
-        print(f"  Average mean error: {np.mean(mean_errors):.2e}")
-        print(f"  Best mean error: {np.min(mean_errors):.2e}")
-        print(f"  Worst mean error: {np.max(mean_errors):.2e}")
+        print(f"  Average max error: {np.max(max_errors):.2e}")
+        print(f"  Best max error: {np.min(max_errors):.2e}")
+        print(f"  Worst max error: {np.max(max_errors):.2e}")
 
 
 if __name__ == "__main__":

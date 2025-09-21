@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Embedding Performance Benchmarks</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .plot-container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin: 20px 0;
+            padding: 20px;
+        }
+        .controls {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin: 20px 0;
+            padding: 20px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label {
+            font-weight: 600;
+            color: #555;
+            font-size: 14px;
+        }
+        select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+            font-size: 14px;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .stats {
+            background: #f0f7ff;
+            border: 1px solid #b3d9ff;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 15px 0;
+            font-size: 14px;
+            color: #0066cc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Embedding Performance Benchmarks</h1>
+
+        <div class="loading" id="loading">Loading benchmark data...</div>
+
+        <div id="content" style="display: none;">
+            <div class="controls">
+                <div class="control-group">
+                    <label for="modelFilter">Model:</label>
+                    <select id="modelFilter">
+                        <option value="all">All Models</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="languageFilter">Language:</label>
+                    <select id="languageFilter">
+                        <option value="all">All Languages</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="deviceFilter">Device:</label>
+                    <select id="deviceFilter">
+                        <option value="all">All Devices</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="contestantFilter">Contestant:</label>
+                    <select id="contestantFilter">
+                        <option value="all">All Contestants</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="stats" id="stats"></div>
+
+            <div class="plot-container">
+                <div id="batchSizePlot"></div>
+            </div>
+
+            <div class="plot-container">
+                <div id="seqLengthPlot"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allData = [];
+        let filteredData = [];
+
+        // Load and process data
+        async function loadData() {
+            try {
+                const response = await fetch('all_benchmarks.jsonl');
+                const text = await response.text();
+
+                const lines = text.trim().split('\n').filter(line => line.trim());
+                allData = [];
+
+                for (const line of lines) {
+                    try {
+                        const entry = JSON.parse(line);
+
+                        // Filter out first 2 run_times entries
+                        const runTimes = entry.run_times || [];
+                        if (runTimes.length < 2) continue;
+
+                        const filteredRunTimes = runTimes.slice(2);
+                        if (filteredRunTimes.length === 0) continue;
+
+                        // Calculate statistics
+                        const meanRuntime = filteredRunTimes.reduce((a, b) => a + b, 0) / filteredRunTimes.length;
+                        const minRuntime = Math.min(...filteredRunTimes);
+                        const maxRuntime = Math.max(...filteredRunTimes);
+
+                        // Create processed entry
+                        const processedEntry = {
+                            ...entry,
+                            contestant_device: `${entry.contestant} (${entry.device})`,
+                            filtered_run_times: filteredRunTimes,
+                            mean_runtime: meanRuntime,
+                            min_runtime: minRuntime,
+                            max_runtime: maxRuntime,
+                            std_runtime: Math.sqrt(filteredRunTimes.reduce((a, b) => a + (b - meanRuntime) ** 2, 0) / filteredRunTimes.length)
+                        };
+
+                        allData.push(processedEntry);
+                    } catch (e) {
+                        console.warn('Failed to parse line:', line);
+                    }
+                }
+
+                console.log(`Loaded ${allData.length} benchmark entries`);
+
+                // Hide loading, show content
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+
+                // Initialize filters and plots
+                initializeFilters();
+                updatePlots();
+
+            } catch (error) {
+                console.error('Failed to load data:', error);
+                document.getElementById('loading').textContent = 'Failed to load benchmark data. Make sure to run build.sh first.';
+            }
+        }
+
+        // Initialize filter dropdowns
+        function initializeFilters() {
+            const models = [...new Set(allData.map(d => d.model))].sort();
+            const languages = [...new Set(allData.map(d => d.language))].sort();
+            const devices = [...new Set(allData.map(d => d.device))].sort();
+            const contestants = [...new Set(allData.map(d => d.contestant))].sort();
+
+            populateSelect('modelFilter', models);
+            populateSelect('languageFilter', languages);
+            populateSelect('deviceFilter', devices);
+            populateSelect('contestantFilter', contestants);
+
+            // Add event listeners
+            ['modelFilter', 'languageFilter', 'deviceFilter', 'contestantFilter'].forEach(id => {
+                document.getElementById(id).addEventListener('change', updatePlots);
+            });
+        }
+
+        function populateSelect(selectId, options) {
+            const select = document.getElementById(selectId);
+            options.forEach(option => {
+                const optionElement = document.createElement('option');
+                optionElement.value = option;
+                optionElement.textContent = option;
+                select.appendChild(optionElement);
+            });
+        }
+
+        // Apply filters
+        function applyFilters() {
+            const modelFilter = document.getElementById('modelFilter').value;
+            const languageFilter = document.getElementById('languageFilter').value;
+            const deviceFilter = document.getElementById('deviceFilter').value;
+            const contestantFilter = document.getElementById('contestantFilter').value;
+
+            filteredData = allData.filter(d => {
+                return (modelFilter === 'all' || d.model === modelFilter) &&
+                       (languageFilter === 'all' || d.language === languageFilter) &&
+                       (deviceFilter === 'all' || d.device === deviceFilter) &&
+                       (contestantFilter === 'all' || d.contestant === contestantFilter);
+            });
+        }
+
+        // Update statistics display
+        function updateStats() {
+            const stats = document.getElementById('stats');
+            if (filteredData.length === 0) {
+                stats.textContent = 'No data matches current filters.';
+                return;
+            }
+
+            const runtimes = filteredData.map(d => d.mean_runtime);
+            const fastest = Math.min(...runtimes);
+            const slowest = Math.max(...runtimes);
+            const avgRuntime = runtimes.reduce((a, b) => a + b, 0) / runtimes.length;
+
+            const fastestEntry = filteredData.find(d => d.mean_runtime === fastest);
+            const slowestEntry = filteredData.find(d => d.mean_runtime === slowest);
+
+            stats.innerHTML = `
+                <strong>Dataset:</strong> ${filteredData.length} configurations |
+                <strong>Fastest:</strong> ${fastest.toFixed(3)}s (${fastestEntry.contestant_device}, batch=${fastestEntry.batch_size}) |
+                <strong>Slowest:</strong> ${slowest.toFixed(3)}s (${slowestEntry.contestant_device}, batch=${slowestEntry.batch_size}) |
+                <strong>Average:</strong> ${avgRuntime.toFixed(3)}s
+            `;
+        }
+
+        // Create batch size scatter plot
+        function createBatchSizePlot() {
+            if (filteredData.length === 0) return;
+
+            const contestantDevices = [...new Set(filteredData.map(d => d.contestant_device))];
+            const traces = [];
+
+            contestantDevices.forEach(cd => {
+                const data = filteredData.filter(d => d.contestant_device === cd);
+
+                traces.push({
+                    x: data.map(d => d.batch_size),
+                    y: data.map(d => d.mean_runtime),
+                    mode: 'markers',
+                    type: 'scatter',
+                    name: cd,
+                    text: data.map(d =>
+                        `${d.contestant_device}<br>` +
+                        `Model: ${d.model}<br>` +
+                        `Language: ${d.language}<br>` +
+                        `Batch Size: ${d.batch_size}<br>` +
+                        `Seq Length: ${d.max_seq_length}<br>` +
+                        `Runtime: ${d.mean_runtime.toFixed(3)}s<br>` +
+                        `Std Dev: ${d.std_runtime.toFixed(3)}s`
+                    ),
+                    hovertemplate: '%{text}<extra></extra>',
+                    marker: {
+                        size: 8,
+                        opacity: 0.7
+                    }
+                });
+            });
+
+            const layout = {
+                title: 'Performance by Batch Size',
+                xaxis: { title: 'Batch Size' },
+                yaxis: { title: 'Mean Runtime (seconds)' },
+                hovermode: 'closest',
+                showlegend: true,
+                height: 500
+            };
+
+            Plotly.newPlot('batchSizePlot', traces, layout, {responsive: true});
+        }
+
+        // Create sequence length scatter plot
+        function createSeqLengthPlot() {
+            if (filteredData.length === 0) return;
+
+            const contestantDevices = [...new Set(filteredData.map(d => d.contestant_device))];
+            const traces = [];
+
+            contestantDevices.forEach(cd => {
+                const data = filteredData.filter(d => d.contestant_device === cd);
+
+                traces.push({
+                    x: data.map(d => d.max_seq_length),
+                    y: data.map(d => d.mean_runtime),
+                    mode: 'markers',
+                    type: 'scatter',
+                    name: cd,
+                    text: data.map(d =>
+                        `${d.contestant_device}<br>` +
+                        `Model: ${d.model}<br>` +
+                        `Language: ${d.language}<br>` +
+                        `Batch Size: ${d.batch_size}<br>` +
+                        `Seq Length: ${d.max_seq_length}<br>` +
+                        `Runtime: ${d.mean_runtime.toFixed(3)}s<br>` +
+                        `Std Dev: ${d.std_runtime.toFixed(3)}s`
+                    ),
+                    hovertemplate: '%{text}<extra></extra>',
+                    marker: {
+                        size: 8,
+                        opacity: 0.7
+                    }
+                });
+            });
+
+            const layout = {
+                title: 'Performance by Sequence Length',
+                xaxis: { title: 'Maximum Sequence Length' },
+                yaxis: { title: 'Mean Runtime (seconds)' },
+                hovermode: 'closest',
+                showlegend: true,
+                height: 500
+            };
+
+            Plotly.newPlot('seqLengthPlot', traces, layout, {responsive: true});
+        }
+
+        // Update all plots
+        function updatePlots() {
+            applyFilters();
+            updateStats();
+            createBatchSizePlot();
+            createSeqLengthPlot();
+        }
+
+        // Load data when page loads
+        loadData();
+    </script>
+</body>
+</html>
