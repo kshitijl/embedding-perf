@@ -86,8 +86,6 @@ int embedder_embed(void* model_handle, const int64_t* input_ids, const int64_t* 
         std::cerr << "OpenMP: " << torch::hasOpenMP() << "\n";
         std::cerr << "XLA: " << torch::hasXLA() << "\n";
 
-        std::cerr << "BLAS backend: " << torch::utils::get_blas_vendor() << std::endl;
-
         for (int start_idx = 0; start_idx < total_samples; start_idx += processing_batch_size) {
             int current_batch_size = std::min(processing_batch_size, total_samples - start_idx);
 
