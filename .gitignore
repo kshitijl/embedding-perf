@@ -1,4 +1,6 @@
 *.pt
+*.onnx
+tokenizer.json
 __pycache__
 build/
 .cache/

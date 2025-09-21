@@ -67,7 +67,7 @@ def main():
     model = SentenceTransformer(args.model, device=args.device)
 
     outfile = Path(
-        f"output/{args.model}/{args.device}/embeddings-{args.max_seq_length}.txt"
+        f"output/{args.model}/{args.device}/embeddings-{args.max_seq_length}-{args.batch_size}.txt"
     )
     benchmark_outfile = Path("output/benchmark_results.jsonl")
     os.makedirs(outfile.parent, exist_ok=True)
@@ -94,6 +94,8 @@ def main():
     total_time = end_total - start_total
 
     benchmark_result = {
+        "contestant": "sentence-transformers-accelerate",
+        "language": "python",
         "model": args.model,
         "device": args.device,
         "max_seq_length": args.max_seq_length,

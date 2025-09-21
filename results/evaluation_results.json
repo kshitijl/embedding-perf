@@ -60,6 +60,54 @@
     "num_vectors": 1027
   },
   {
+    "contestant": "python-onnxruntime",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 128,
+    "mean_error": 1.6135176749751486e-07,
+    "median_error": 1.5899999999957615e-07,
+    "max_error": 3.2599999999494145e-07,
+    "min_error": 9.219999999587891e-08,
+    "std_error": 3.100593456403768e-08,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-onnxruntime",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 64,
+    "mean_error": 1.6080863076913448e-07,
+    "median_error": 1.5750000000036568e-07,
+    "max_error": 2.9420000000057733e-07,
+    "min_error": 9.119999999987471e-08,
+    "std_error": 2.8349781488909977e-08,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-onnxruntime",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 32,
+    "mean_error": 1.5572038169430682e-07,
+    "median_error": 1.5329999999980082e-07,
+    "max_error": 2.988999999991443e-07,
+    "min_error": 9.829999999926009e-08,
+    "std_error": 2.627570320128103e-08,
+    "num_vectors": 1027
+  },
+  {
+    "contestant": "python-onnxruntime",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 256,
+    "mean_error": 1.541691648489097e-07,
+    "median_error": 1.51000000003787e-07,
+    "max_error": 2.916000000005581e-07,
+    "min_error": 9.830000000099481e-08,
+    "std_error": 2.7012181387903372e-08,
+    "num_vectors": 1027
+  },
+  {
     "contestant": "rust-cpp-libtorch-torchscript",
     "model": "all-MiniLM-L6-v2",
     "device": "mps",
@@ -112,11 +160,11 @@
     "model": "all-MiniLM-L6-v2",
     "device": "cpu",
     "seq_length": 128,
-    "mean_error": 1.5573415813074504e-07,
-    "median_error": 1.5269999999872885e-07,
-    "max_error": 2.9059999999414554e-07,
-    "min_error": 9.68999999961806e-08,
-    "std_error": 2.6925844296480986e-08,
+    "mean_error": 1.5117845452787476e-07,
+    "median_error": 1.489999999979008e-07,
+    "max_error": 2.9336999999955704e-07,
+    "min_error": 8.940000000012827e-08,
+    "std_error": 2.521335441633264e-08,
     "num_vectors": 1027
   },
   {
@@ -148,11 +196,11 @@
     "model": "all-MiniLM-L6-v2",
     "device": "cpu",
     "seq_length": 256,
-    "mean_error": 1.623169174295291e-07,
-    "median_error": 1.6019999999825063e-07,
-    "max_error": 3.166999999956732e-07,
-    "min_error": 1.0060000000047808e-07,
-    "std_error": 2.8488549332228245e-08,
+    "mean_error": 1.6148980973743077e-07,
+    "median_error": 1.5650000000089204e-07,
+    "max_error": 2.943000000019125e-07,
+    "min_error": 1.0050000000261239e-07,
+    "std_error": 2.7795411147632175e-08,
     "num_vectors": 1027
   },
   {

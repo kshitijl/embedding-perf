@@ -1,11 +1,11 @@
 use anyhow::{Error as E, Result};
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::os::raw::{c_char, c_int, c_long};
+use std::os::raw::{c_char, c_int, c_long, c_uint};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -116,6 +116,8 @@ impl Drop for EmbedderModel {
 
 #[derive(Serialize)]
 struct BenchmarkResult {
+    contestant: String,
+    language: String,
     model: String,
     device: String,
     max_seq_length: usize,
@@ -261,7 +263,7 @@ fn get_output_path(args: &Args) -> PathBuf {
 }
 
 fn get_torchscript_model_path(args: &Args, repo_root: &Path) -> PathBuf {
-    repo_root.join(format!("torchscript-models/output/{}/model.pt", args.model))
+    repo_root.join(format!("models/torchscript/output/{}/model.pt", args.model))
 }
 
 fn get_input_tokens_path(args: &Args, repo_root: &Path) -> PathBuf {
@@ -271,21 +273,90 @@ fn get_input_tokens_path(args: &Args, repo_root: &Path) -> PathBuf {
     ))
 }
 
-fn main() -> Result<()> {
-    let repo_root = get_repo_root();
+unsafe extern "C" {
+    fn _dyld_image_count() -> c_uint;
+    fn _dyld_get_image_name(image_index: c_uint) -> *const c_char;
+}
 
+#[cfg(target_os = "macos")]
+fn find_libtorch_paths() -> Vec<String> {
+    let count = unsafe { _dyld_image_count() };
+    let mut answer = Vec::new();
+
+    for i in 0..count {
+        let name_ptr = unsafe { _dyld_get_image_name(i) };
+        if !name_ptr.is_null() {
+            if let Ok(name) = unsafe { CStr::from_ptr(name_ptr).to_str() } {
+                if name.contains("libtorch") && name.ends_with(".dylib") {
+                    answer.push(name.to_string());
+                }
+            }
+        }
+    }
+
+    answer
+}
+
+enum BlasBackend {
+    Accelerate,
+    Mkl,
+    OpenBlas,
+}
+
+impl fmt::Display for BlasBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match *self {
+            BlasBackend::Accelerate => write!(f, "accelerate"),
+            BlasBackend::Mkl => write!(f, "mkl"),
+            BlasBackend::OpenBlas => write!(f, "openblas"),
+        }
+    }
+}
+
+fn detect_lobtorch_blas() -> Option<BlasBackend> {
+    let libtorch_paths = find_libtorch_paths();
+
+    for path in libtorch_paths {
+        let otool_output = Command::new("otool").args(&["-L", &path]).output().ok()?;
+        let otool_output = String::from_utf8_lossy(&otool_output.stdout).to_lowercase();
+
+        if otool_output.contains("accelerate.framework") {
+            return Some(BlasBackend::Accelerate);
+        }
+
+        if otool_output.contains("openblas") {
+            return Some(BlasBackend::OpenBlas);
+        }
+
+        if otool_output.contains("libmkl") {
+            return Some(BlasBackend::Mkl);
+        }
+    }
+
+    None
+}
+
+fn main() -> Result<()> {
     let args = Args::parse();
 
     if args.num_runs < 1 {
-        return Err(E::msg(format!("num runs must be at least 1, given {}", args.num_runs)));
+        return Err(E::msg(format!(
+            "num runs must be at least 1, given {}",
+            args.num_runs
+        )));
     }
 
-    let start_total = Instant::now();
+    let blas = detect_lobtorch_blas()
+        .map(|x| format!("{}", x))
+        .unwrap_or("unknown".to_string());
+    eprintln!("Detected BLAS: {}", blas);
 
+    let repo_root = get_repo_root();
     let output_path = get_output_path(&args);
     let input_tokens_path = get_input_tokens_path(&args, &repo_root);
     let model_path = get_torchscript_model_path(&args, &repo_root);
 
+    let start_total = Instant::now();
     eprintln!("Loading model");
     let model = EmbedderModel::load(&model_path, args.device, args.embedding_dim)?;
     eprintln!("Parsing input tokens");
@@ -297,7 +368,8 @@ fn main() -> Result<()> {
     for i in 0..args.num_runs {
         eprintln!("Run {}/{}", i + 1, args.num_runs);
         let start_run = Instant::now();
-        embeddings = Some(model.embed_batch(&input.input_ids, &input.attention_mask, args.batch_size)?);
+        embeddings =
+            Some(model.embed_batch(&input.input_ids, &input.attention_mask, args.batch_size)?);
         let end_run = Instant::now();
         run_times.push(end_run.duration_since(start_run).as_secs_f64());
     }
@@ -306,6 +378,8 @@ fn main() -> Result<()> {
     let total_time = end_total.duration_since(start_total).as_secs_f64();
 
     let benchmark_result = BenchmarkResult {
+        language: "rust".to_string(),
+        contestant: format!("libtorch-ts-{}", blas),
         model: args.model.clone(),
         device: args.device.to_string(),
         max_seq_length: args.max_seq_length,
