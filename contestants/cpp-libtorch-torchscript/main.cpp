@@ -5,14 +5,21 @@
 #include <torch/torch.h>
 
 #include <CLI/CLI.hpp>
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <ios>
 #include <iostream>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 using json = nlohmann::json;
 
@@ -47,45 +54,67 @@ class SentenceEmbedder {
         }
     }
 
-    torch::Tensor embed(const std::vector<TokenizedInput>& tokenized_inputs) {
+    torch::Tensor embed_batch(const std::vector<TokenizedInput>& tokenized_inputs,
+                              size_t batch_size) {
         try {
+            // Create full tensors from all inputs (stack once)
             std::vector<torch::Tensor> input_ids_list, attention_mask_list, token_type_ids_list;
-
             for (const auto& input : tokenized_inputs) {
                 input_ids_list.push_back(input.input_ids);
                 attention_mask_list.push_back(input.attention_mask);
                 token_type_ids_list.push_back(input.token_type_ids);
             }
 
-            auto batch_input_ids = torch::stack(input_ids_list).to(device_);
-            auto batch_attention_mask = torch::stack(attention_mask_list).to(device_);
-            // auto batch_token_type_ids = torch::stack(token_type_ids_list).to(device_);
+            auto full_input_ids = torch::stack(input_ids_list).to(device_);
+            auto full_attention_mask = torch::stack(attention_mask_list).to(device_);
+            // auto full_token_type_ids = torch::stack(token_type_ids_list).to(device_);
 
-            c10::Dict<std::string, torch::Tensor> input_dict;
-            input_dict.insert("input_ids", batch_input_ids);
-            input_dict.insert("attention_mask", batch_attention_mask);
-            // input_dict.insert("token_type_ids", batch_token_type_ids);
+            std::vector<torch::Tensor> output_batches;
 
-            std::vector<torch::jit::IValue> inputs;
-            inputs.push_back(input_dict);
-            torch::jit::IValue output = model_.forward(inputs);
+            torch::InferenceMode guard;
 
-            torch::Tensor embeddings;
-            if (output.isGenericDict()) {
-                auto output_dict = output.toGenericDict();
-                auto embedding_ivalue = output_dict.at("sentence_embedding");
-                embeddings = embedding_ivalue.toTensor();
-            } else if (output.isTensor()) {
-                embeddings = output.toTensor();
-            } else if (output.isTuple()) {
-                auto tuple_output = output.toTuple();
-                embeddings = tuple_output->elements()[0].toTensor();
-            } else {
-                std::cout << output << std::endl;
-                throw std::runtime_error("Unexpected output type from model.");
+            // Process in batches using slices (no copying)
+            for (size_t start_idx = 0; start_idx < tokenized_inputs.size();
+                 start_idx += batch_size) {
+                size_t current_batch_size =
+                    std::min(batch_size, tokenized_inputs.size() - start_idx);
+
+                // Create slices (views) into the full tensors - no data copying
+                torch::Tensor batch_input_ids =
+                    full_input_ids.slice(0, start_idx, start_idx + current_batch_size);
+                torch::Tensor batch_attention_mask =
+                    full_attention_mask.slice(0, start_idx, start_idx + current_batch_size);
+                // torch::Tensor batch_token_type_ids =
+                //     full_token_type_ids.slice(0, start_idx, start_idx + current_batch_size);
+
+                c10::Dict<std::string, torch::Tensor> input_dict;
+                input_dict.insert("input_ids", batch_input_ids);
+                input_dict.insert("attention_mask", batch_attention_mask);
+                // input_dict.insert("token_type_ids", batch_token_type_ids);
+
+                std::vector<torch::jit::IValue> inputs;
+                inputs.push_back(input_dict);
+                torch::jit::IValue output = model_.forward(inputs);
+
+                torch::Tensor embeddings;
+                if (output.isGenericDict()) {
+                    auto output_dict = output.toGenericDict();
+                    auto embedding_ivalue = output_dict.at("sentence_embedding");
+                    embeddings = embedding_ivalue.toTensor();
+                } else if (output.isTensor()) {
+                    embeddings = output.toTensor();
+                } else if (output.isTuple()) {
+                    auto tuple_output = output.toTuple();
+                    embeddings = tuple_output->elements()[0].toTensor();
+                } else {
+                    std::cout << output << std::endl;
+                    throw std::runtime_error("Unexpected output type from model.");
+                }
+
+                output_batches.push_back(embeddings.cpu());
             }
 
-            return embeddings.to(torch::kCPU);
+            return torch::cat(output_batches, 0);
         } catch (const std::exception& e) {
             std::cerr << "Error during inference: " << e.what() << std::endl;
             throw;
@@ -224,9 +253,9 @@ std::string getRepoRoot() {
 }
 
 std::string getOutputPath(const std::string& model, const std::string& device,
-                          unsigned long max_seq_length) {
-    std::string path =
-        "output/" + model + "/" + device + "/embeddings-" + std::to_string(max_seq_length) + ".txt";
+                          unsigned long max_seq_length, unsigned long batch_size) {
+    std::string path = "output/" + model + "/" + device + "/embeddings-" +
+                       std::to_string(max_seq_length) + "-" + std::to_string(batch_size) + ".txt";
 
     // Create directories if they don't exist
     std::filesystem::path fs_path(path);
@@ -236,12 +265,89 @@ std::string getOutputPath(const std::string& model, const std::string& device,
 }
 
 std::string getTorchscriptModelPath(const std::string& model, const std::string& repo_root) {
-    return repo_root + "/torchscript-models/output/" + model + "/model.pt";
+    return repo_root + "/models/torchscript/output/" + model + "/model.pt";
 }
 
 std::string getInputTokensPath(const std::string& model, const std::string& repo_root) {
     return repo_root + "/data/reference-output/" + model + "/tokenized.txt";
 }
+
+enum class BlasBackend { Accelerate, Mkl, OpenBlas, Unknown };
+
+std::string blasBackendToString(BlasBackend backend) {
+    switch (backend) {
+        case BlasBackend::Accelerate:
+            return "accelerate";
+        case BlasBackend::Mkl:
+            return "mkl";
+        case BlasBackend::OpenBlas:
+            return "openblas";
+        case BlasBackend::Unknown:
+            return "unknown";
+    }
+    return "unknown";
+}
+
+#ifdef __APPLE__
+std::vector<std::string> findLibtorchPaths() {
+    std::vector<std::string> paths;
+    uint32_t count = _dyld_image_count();
+
+    for (uint32_t i = 0; i < count; ++i) {
+        const char* name = _dyld_get_image_name(i);
+        if (name) {
+            std::string path(name);
+            if (path.find("libtorch") != std::string::npos &&
+                path.find(".dylib") != std::string::npos) {
+                paths.push_back(path);
+            }
+        }
+    }
+
+    return paths;
+}
+
+BlasBackend detectLibtorchBlas() {
+    auto libtorch_paths = findLibtorchPaths();
+
+    for (const auto& path : libtorch_paths) {
+        std::string command = "otool -L \"" + path + "\"";
+
+        FILE* pipe = popen(command.c_str(), "r");
+        if (!pipe) continue;
+
+        std::string result;
+        char buffer[128];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            result += buffer;
+        }
+        pclose(pipe);
+
+        // Convert to lowercase for easier matching
+        std::transform(result.begin(), result.end(), result.begin(), ::tolower);
+
+        if (result.find("accelerate.framework") != std::string::npos) {
+            return BlasBackend::Accelerate;
+        }
+
+        if (result.find("openblas") != std::string::npos) {
+            return BlasBackend::OpenBlas;
+        }
+
+        if (result.find("libmkl") != std::string::npos) {
+            return BlasBackend::Mkl;
+        }
+    }
+
+    return BlasBackend::Unknown;
+}
+#else
+BlasBackend detectLibtorchBlas() {
+    // On non-macOS systems, we could add Linux/Windows detection here
+    // For now, return unknown
+    return BlasBackend::Unknown;
+}
+#endif
 
 int main(int argc, char** argv) {
     CLI::App app{"Sentence Transformer Embedder"};
@@ -250,11 +356,15 @@ int main(int argc, char** argv) {
     std::string device;
     unsigned long max_seq_length;
     int embedding_dim;
+    unsigned long batch_size;
+    unsigned long num_runs = 1;
 
     app.add_option("--model", model, "Model name")->required();
     app.add_option("--device", device, "Device (cpu or mps)")->required();
     app.add_option("--max-seq-length", max_seq_length, "Max sequence length")->required();
     app.add_option("--embedding-dim", embedding_dim, "Embedding dimension")->required();
+    app.add_option("--batch-size", batch_size, "Batch size for processing")->required();
+    app.add_option("--num-runs", num_runs, "Number of runs for benchmarking")->default_val(1);
 
     CLI11_PARSE(app, argc, argv);
 
@@ -264,26 +374,83 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (num_runs < 1) {
+        std::cerr << "num runs must be at least 1, given " << num_runs << std::endl;
+        return 1;
+    }
+
     bool use_mps = (device == "mps");
 
+    // Detect BLAS backend
+    BlasBackend blas = detectLibtorchBlas();
+    std::string blas_name = blasBackendToString(blas);
+    std::cerr << "Detected BLAS: " << blas_name << std::endl;
+
     std::string repo_root = getRepoRoot();
-    std::string output_path = getOutputPath(model, device, max_seq_length);
+    std::string output_path = getOutputPath(model, device, max_seq_length, batch_size);
     std::string model_path = getTorchscriptModelPath(model, repo_root);
     std::string token_path = getInputTokensPath(model, repo_root);
 
     std::cout << "Repo root: " << repo_root << std::endl;
+    std::cout << "Benchmarking " << model << " on " << device << ", seq len " << max_seq_length
+              << ", batch size " << batch_size << std::endl;
+
+    auto start_total = std::chrono::high_resolution_clock::now();
 
     auto tokenized_inputs = readTokenizedInputs(token_path, max_seq_length);
-    std::cout << " input_ids shape: " << tokenized_inputs[0].input_ids.sizes()
+    std::cout << "Loaded " << tokenized_inputs.size() << " tokenized inputs" << std::endl;
+    std::cout << "Sample input_ids shape: " << tokenized_inputs[0].input_ids.sizes()
               << ", attention mask shape: " << tokenized_inputs[0].attention_mask.sizes() << "\n";
 
     SentenceEmbedder embedder(model_path, use_mps);
 
-    std::cout << "Generating embeddings... \n";
-    auto embeddings = embedder.embed(tokenized_inputs);
+    std::vector<double> run_times;
+    torch::Tensor embeddings;
+
+    for (unsigned long i = 0; i < num_runs; ++i) {
+        std::cout << "Run " << (i + 1) << "/" << num_runs << std::endl;
+        auto start_run = std::chrono::high_resolution_clock::now();
+
+        embeddings = embedder.embed_batch(tokenized_inputs, batch_size);
+
+        auto end_run = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::duration<double>>(end_run - start_run);
+        run_times.push_back(duration.count());
+    }
+
+    auto end_total = std::chrono::high_resolution_clock::now();
+    auto total_duration =
+        std::chrono::duration_cast<std::chrono::duration<double>>(end_total - start_total);
+    double total_time = total_duration.count();
+
+    // Calculate num_tokens (count non-padding tokens)
+    long num_tokens = 0;
+    for (const auto& input : tokenized_inputs) {
+        auto attention_mask = input.attention_mask;
+        num_tokens += torch::sum(attention_mask).item<int>();
+    }
+
+    // Create benchmark result JSON with BLAS backend in contestant name
+    std::string contestant_name = "libtorch-ts-" + blas_name;
+    json benchmark_result = {{"contestant", contestant_name},
+                             {"language", "cpp"},
+                             {"model", model},
+                             {"device", device},
+                             {"max_seq_length", max_seq_length},
+                             {"batch_size", batch_size},
+                             {"total_time", total_time},
+                             {"run_times", run_times},
+                             {"num_tokens", num_tokens}};
+
+    // Write benchmark result
+    std::filesystem::create_directories("output");
+    std::ofstream benchmark_file("output/benchmark_results.jsonl", std::ios::app);
+    benchmark_file << benchmark_result.dump() << std::endl;
+    benchmark_file.close();
 
     writeEmbeddings(embeddings, output_path);
 
-    std::cout << "ok\n";
+    std::cout << "Benchmark complete!" << std::endl;
     return 0;
 }

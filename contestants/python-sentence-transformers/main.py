@@ -93,6 +93,12 @@ def main():
     end_total = time.time()
     total_time = end_total - start_total
 
+    # Calculate num_tokens by tokenizing sentences and counting non-padding tokens
+    tokenizer = model.tokenizer
+    tokenized = tokenizer(sentences, padding=True, truncation=True, max_length=args.max_seq_length, return_attention_mask=True)
+    # Count total non-padding tokens (where attention_mask == 1)
+    num_tokens = sum(sum(attention_mask) for attention_mask in tokenized['attention_mask'])
+
     benchmark_result = {
         "contestant": "sentence-transformers-accelerate",
         "language": "python",
@@ -102,6 +108,7 @@ def main():
         "batch_size": args.batch_size,
         "total_time": total_time,
         "run_times": run_times,
+        "num_tokens": num_tokens,
     }
 
     with open(benchmark_outfile, "a") as f:

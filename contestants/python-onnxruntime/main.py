@@ -2,10 +2,9 @@ import os
 from pathlib import Path
 import subprocess
 import onnxruntime as ort
-from tokenizers import Tokenizer
 import numpy as np
 import argparse
-from typing import List
+from typing import List, Dict, Any
 import time
 import json
 from tqdm import tqdm
@@ -34,51 +33,99 @@ def normalize(embeddings: np.ndarray) -> np.ndarray:
     return embeddings / norms
 
 
-def embed(
+def load_tokenized_input(file_path: Path, max_seq_length: int) -> Dict[str, np.ndarray]:
+    """
+    Load pre-tokenized input from JSONL file, similar to the Rust implementation.
+    """
+    all_input_ids = []
+    all_attention_masks = []
+    all_token_type_ids = []
+
+    with open(file_path, 'r') as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                data = json.loads(line)
+
+                # Extract arrays (they come nested as [[...]])
+                input_ids = data['input_ids'][0]
+                attention_mask = data['attention_mask'][0]
+                token_type_ids = data.get('token_type_ids', [[]])[0] if data.get('token_type_ids') else [0] * len(input_ids)
+
+                # Handle truncation and padding like Rust implementation
+                if len(input_ids) > max_seq_length:
+                    input_ids = input_ids[:max_seq_length - 1] + [102]  # Add SEP token
+                    attention_mask = attention_mask[:max_seq_length - 1] + [1]
+                    token_type_ids = token_type_ids[:max_seq_length - 1] + [0]
+
+                # Pad to max_seq_length
+                while len(input_ids) < max_seq_length:
+                    input_ids.append(0)
+                    attention_mask.append(0)
+                    token_type_ids.append(0)
+
+                all_input_ids.append(input_ids)
+                all_attention_masks.append(attention_mask)
+                all_token_type_ids.append(token_type_ids)
+
+            except json.JSONDecodeError as e:
+                print(f"Warning: Failed to parse line {line_num}: {e}")
+                continue
+            except Exception as e:
+                print(f"Warning: Error processing line {line_num}: {e}")
+                continue
+
+    return {
+        'input_ids': np.array(all_input_ids, dtype=np.int64),
+        'attention_mask': np.array(all_attention_masks, dtype=np.int64),
+        'token_type_ids': np.array(all_token_type_ids, dtype=np.int64)
+    }
+
+
+def embed_from_tokens(
     session: ort.InferenceSession,
-    tokenizer: Tokenizer,
-    sentences: List[str],
+    tokenized_input: Dict[str, np.ndarray],
     batch_size: int,
 ) -> np.ndarray:
     """
-    Generates embeddings for a list of sentences using an ONNX model.
+    Generates embeddings from pre-tokenized input using an ONNX model.
     """
     all_embeddings = []
-    num_sentences = len(sentences)
+    input_ids = tokenized_input['input_ids']
+    attention_mask = tokenized_input['attention_mask']
+    token_type_ids = tokenized_input['token_type_ids']
+
+    num_samples = len(input_ids)
 
     # Set up the progress bar
-    pbar = tqdm(total=num_sentences, desc="Embedding sentences", unit="sentence")
+    pbar = tqdm(total=num_samples, desc="Embedding sentences", unit="sentence")
 
-    for i in range(0, num_sentences, batch_size):
-        batch_sentences = sentences[i : i + batch_size]
+    for i in range(0, num_samples, batch_size):
+        batch_input_ids = input_ids[i:i + batch_size]
+        batch_attention_mask = attention_mask[i:i + batch_size]
+        batch_token_type_ids = token_type_ids[i:i + batch_size]
 
-        # 1. Tokenize the input sentences
-        encoded_input = tokenizer.encode_batch(batch_sentences)
-
-        input_ids = np.array([e.ids for e in encoded_input], dtype=np.int64)
-        attention_mask = np.array(
-            [e.attention_mask for e in encoded_input], dtype=np.int64
-        )
-        token_type_ids = np.array([e.type_ids for e in encoded_input], dtype=np.int64)
-
-        # 2. Prepare the model inputs for ONNX Runtime
+        # Prepare the model inputs for ONNX Runtime
         model_inputs = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "token_type_ids": token_type_ids,
+            "input_ids": batch_input_ids,
+            "attention_mask": batch_attention_mask,
+            "token_type_ids": batch_token_type_ids,
         }
 
-        # 3. Run inference
+        # Run inference
         model_outputs = session.run(None, model_inputs)
         last_hidden_state = model_outputs[0]
         assert isinstance(last_hidden_state, np.ndarray)
 
-        # 4. Perform pooling and normalization
-        pooled_embeddings = mean_pooling(last_hidden_state, attention_mask)
+        # Perform pooling and normalization
+        pooled_embeddings = mean_pooling(last_hidden_state, batch_attention_mask)
         normalized_embeddings = normalize(pooled_embeddings)
 
         all_embeddings.append(normalized_embeddings)
-        pbar.update(len(batch_sentences))
+        pbar.update(len(batch_input_ids))
 
     pbar.close()
     return np.vstack(all_embeddings)
@@ -112,11 +159,10 @@ def main():
     repo_root = Path(repo_root)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sentences", default=Path(repo_root) / "data/sentences.txt")
     parser.add_argument(
         "--model",
         required=True,
-        help="Path to the directory containing model.onnx and tokenizer.json",
+        help="Model name (will look for tokenized input in data/reference-output/{model}/tokenized.txt)",
     )
     parser.add_argument(
         "--device",
@@ -145,36 +191,32 @@ def main():
 
     model_path = repo_root / f"models/onnx/{args.model}"
     onnx_model_file = model_path / "model.onnx"
-    tokenizer_file = model_path / "tokenizer.json"
+    tokenized_input_file = repo_root / f"data/reference-output/{args.model}/tokenized.txt"
 
-    if not onnx_model_file.exists() or not tokenizer_file.exists():
-        raise FileNotFoundError(
-            f"Could not find 'model.onnx' and/or 'tokenizer.json' in {model_path}"
-        )
+    if not onnx_model_file.exists():
+        raise FileNotFoundError(f"Could not find 'model.onnx' in {model_path}")
+
+    if not tokenized_input_file.exists():
+        raise FileNotFoundError(f"Could not find tokenized input at {tokenized_input_file}")
 
     start_total = time.time()
 
-    # Load tokenizer and configure it
-    tokenizer = Tokenizer.from_file(str(tokenizer_file))
-    tokenizer.enable_truncation(max_length=args.max_seq_length)
-    tokenizer.enable_padding(pad_id=0, pad_token="[PAD]", length=args.max_seq_length)
-    print(f"Tokenizer max sequence length set to {args.max_seq_length}")
+    # Load pre-tokenized input
+    print("Loading pre-tokenized input...")
+    tokenized_input = load_tokenized_input(tokenized_input_file, args.max_seq_length)
+    print(f"Loaded {len(tokenized_input['input_ids'])} tokenized sequences")
 
     # Load ONNX model
     print("Loading ONNX inference session...")
     session = ort.InferenceSession(str(onnx_model_file), providers=execution_providers)
     print("Model loaded successfully.")
 
-    model_name_for_path = model_path.name
     outfile = Path(
-        f"output/{model_name_for_path}/{args.device}/embeddings-{args.max_seq_length}-{args.batch_size}.txt"
+        f"output/{args.model}/{args.device}/embeddings-{args.max_seq_length}-{args.batch_size}.txt"
     )
     benchmark_outfile = Path("output/benchmark_results.jsonl")
     os.makedirs(outfile.parent, exist_ok=True)
     os.makedirs(benchmark_outfile.parent, exist_ok=True)
-
-    with open(args.sentences) as f:
-        sentences = [line.strip() for line in f.readlines()]
 
     run_times = []
     embeddings = None
@@ -182,10 +224,9 @@ def main():
     for i in range(args.num_runs):
         print(f"Run {i + 1} of {args.num_runs}")
         start_run = time.time()
-        embeddings = embed(
+        embeddings = embed_from_tokens(
             session,
-            tokenizer,
-            sentences,
+            tokenized_input,
             args.batch_size,
         )
         end_run = time.time()
@@ -193,6 +234,9 @@ def main():
 
     end_total = time.time()
     total_time = end_total - start_total
+
+    # Calculate num_tokens (total non-padding tokens for one full run)
+    num_tokens = int(np.sum(tokenized_input['attention_mask']))
 
     benchmark_result = {
         "contestant": "onnxruntime",
@@ -204,6 +248,7 @@ def main():
         "batch_size": args.batch_size,
         "total_time": total_time,
         "run_times": run_times,
+        "num_tokens": num_tokens,
     }
 
     with open(benchmark_outfile, "a") as f:

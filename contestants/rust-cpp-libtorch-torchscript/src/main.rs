@@ -124,6 +124,7 @@ struct BenchmarkResult {
     batch_size: usize,
     total_time: f64,
     run_times: Vec<f64>,
+    num_tokens: usize,
 }
 
 #[derive(Debug)]
@@ -377,6 +378,11 @@ fn main() -> Result<()> {
     let end_total = Instant::now();
     let total_time = end_total.duration_since(start_total).as_secs_f64();
 
+    // Calculate total tokens for one full run (all sequences)
+    let num_tokens = input.input_ids.iter()
+        .map(|seq| seq.iter().filter(|&&token| token != 0).count()) // Count non-padding tokens
+        .sum();
+
     let benchmark_result = BenchmarkResult {
         language: "rust".to_string(),
         contestant: format!("libtorch-ts-{}", blas),
@@ -386,6 +392,7 @@ fn main() -> Result<()> {
         batch_size: args.batch_size,
         total_time,
         run_times,
+        num_tokens,
     };
 
     let benchmark_path = PathBuf::from("output/benchmark_results.jsonl");

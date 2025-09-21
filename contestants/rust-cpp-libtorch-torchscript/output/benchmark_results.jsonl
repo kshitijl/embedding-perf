@@ -46,3 +46,4 @@
 {"contestant":"libtorch-ts-openblas","language":"rust","model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":256,"batch_size":32,"total_time":323.093737833,"run_times":[65.024209083,63.887271208,65.127125958,64.575271417,64.3476425]}
 {"contestant":"libtorch-ts-openblas","language":"rust","model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":256,"batch_size":64,"total_time":319.412610791,"run_times":[63.225504792,63.974390292,63.694738625,63.475078292,64.899060625]}
 {"contestant":"libtorch-ts-openblas","language":"rust","model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":256,"batch_size":128,"total_time":321.32084325,"run_times":[63.552478417,64.447705459,64.026975708,63.29174175,65.864681875]}
+{"contestant":"libtorch-ts-openblas","language":"rust","model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":128,"batch_size":32,"total_time":17.697007,"run_times":[8.921047917,8.626951583],"num_tokens":131097}
