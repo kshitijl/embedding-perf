@@ -30,3 +30,9 @@
 {"model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":256,"batch_size":32,"total_time":851.523178125,"run_times":[65.20095925,65.744218666,65.185398041,65.492907958,65.730940792,65.28946825,65.616256625,65.002519708,65.2795785,65.53081925,65.891275875,66.236972667,65.25955225]}
 {"model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":256,"batch_size":64,"total_time":818.015575084,"run_times":[62.976712834,62.644062875,62.653435583,63.187712833,62.696654666,63.407684417,62.986749,62.941433959,63.050437041,62.417718625,63.009756167,63.197977292,62.774560416]}
 {"model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":256,"batch_size":128,"total_time":815.09721525,"run_times":[62.818851709,62.317610416,62.151727292,63.09913925,63.110272791,62.527118291,62.387807958,63.40388425,63.503294208,62.377781459,62.134921417,62.400345875,62.801483209]}
+{"model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":64,"batch_size":32,"total_time":8.405107375,"run_times":[4.278539792,4.050641125]}
+{"model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":128,"batch_size":32,"total_time":16.265841709,"run_times":[8.161208583,8.017020042]}
+{"model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":128,"batch_size":32,"total_time":16.024944459,"run_times":[8.061867458,7.885492208]}
+{"model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":128,"batch_size":32,"total_time":17.269935083,"run_times":[9.232298459,7.967474042]}
+{"model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":128,"batch_size":32,"total_time":17.319137625,"run_times":[8.840117292,8.330366583]}
+{"model":"all-MiniLM-L6-v2","device":"cpu","max_seq_length":128,"batch_size":32,"total_time":18.203846291,"run_times":[8.80300775,9.257501625]}

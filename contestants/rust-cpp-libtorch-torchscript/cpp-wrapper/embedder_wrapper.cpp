@@ -33,6 +33,7 @@ void* embedder_load_model(const char* model_path, int use_mps) {
 
     try {
         wrapper->model = torch::jit::load(model_path, device_);
+        wrapper->model = torch::jit::optimize_for_inference(wrapper->model);
         wrapper->model.eval();
         std::cerr << "Model loaded successfully\n";
 
@@ -78,7 +79,14 @@ int embedder_embed(void* model_handle, const int64_t* input_ids, const int64_t* 
         std::vector<torch::Tensor> output_batches;
         int embedding_dim = -1;
 
-        torch::NoGradGuard no_grad;
+        torch::InferenceMode guard;
+        std::cerr << "Num threads: " << torch::get_num_threads() << "\n";
+        std::cerr << "Num interop threads: " << torch::get_num_interop_threads() << "\n";
+        std::cerr << "MKL: " << torch::hasMKL() << "\n";
+        std::cerr << "OpenMP: " << torch::hasOpenMP() << "\n";
+        std::cerr << "XLA: " << torch::hasXLA() << "\n";
+
+        std::cerr << "BLAS backend: " << torch::utils::get_blas_vendor() << std::endl;
 
         for (int start_idx = 0; start_idx < total_samples; start_idx += processing_batch_size) {
             int current_batch_size = std::min(processing_batch_size, total_samples - start_idx);
@@ -99,7 +107,13 @@ int embedder_embed(void* model_handle, const int64_t* input_ids, const int64_t* 
             std::vector<torch::jit::IValue> inputs;
             inputs.push_back(input_dict);
 
+            auto start = std::chrono::high_resolution_clock::now();
             auto output = wrapper->model.forward(inputs);
+            auto end = std::chrono::high_resolution_clock::now();
+            std::cerr << "Forward pass took: "
+                      << std::chrono::duration<float, std::milli>(end - start).count() << " ms\n";
+
+            // auto output = wrapper->model.forward(inputs);
 
             torch::Tensor embeddings;
             if (output.isGenericDict()) {
@@ -123,7 +137,7 @@ int embedder_embed(void* model_handle, const int64_t* input_ids, const int64_t* 
         }
 
         std::cerr << "Concatenating output batches\n";
-        torch::Tensor final_embeddings = torch::cat(output_batches, 0).cpu().contiguous();
+        torch::Tensor final_embeddings = torch::cat(output_batches, 0).cpu();
 
         std::cerr << "Copying output into provided buffer\n";
         size_t num_elements = final_embeddings.numel();

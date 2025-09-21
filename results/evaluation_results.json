@@ -144,6 +144,18 @@
     "num_vectors": 1027
   },
   {
+    "contestant": "rust-cpp-libtorch-torchscript",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 256,
+    "mean_error": 1.623169174295291e-07,
+    "median_error": 1.6019999999825063e-07,
+    "max_error": 3.166999999956732e-07,
+    "min_error": 1.0060000000047808e-07,
+    "std_error": 2.8488549332228245e-08,
+    "num_vectors": 1027
+  },
+  {
     "contestant": "python-sentence-transformers",
     "model": "all-MiniLM-L6-v2",
     "device": "mps",

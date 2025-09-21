@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import subprocess
 from sentence_transformers import SentenceTransformer
+import torch
 import numpy as np
 import argparse
 from typing import List
@@ -18,7 +19,9 @@ def embed(
 ) -> np.ndarray:
     model.max_seq_length = max_seq_length  # type:ignore
     print(f"max seq len is {model.max_seq_length}")
-    embeddings = model.encode(sentences, batch_size=batch_size, show_progress_bar=True)
+    embeddings = model.encode(
+        sentences, batch_size=batch_size, show_progress_bar=True, device=device
+    )
     return embeddings
 
 
@@ -50,6 +53,16 @@ def main():
     if args.num_runs < 1:
         raise ValueError(f"num runs must be at least 1, given {args.num_runs}")
 
+    print(
+        f"Benchmarking {args.model} on {args.device}, seq len {args.max_seq_length}, batch size {args.batch_size}"
+    )
+
+    print("MKL:", torch.backends.mkl.is_available())
+    print("OpenMP:", torch.backends.openmp.is_available())
+    print(
+        f"Threads: {torch.get_num_threads()}, interop threads: {torch.get_num_interop_threads()}"
+    )
+
     start_total = time.time()
     model = SentenceTransformer(args.model, device=args.device)
 
@@ -65,6 +78,7 @@ def main():
     embeddings = None
 
     for i in range(args.num_runs):
+        print(f"Run {i + 1} of {args.num_runs}")
         start_run = time.time()
         embeddings = embed(
             model,
