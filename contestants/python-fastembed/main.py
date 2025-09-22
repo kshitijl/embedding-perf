@@ -81,6 +81,7 @@ def main():
 
     start_total = time.time()
     model = TextEmbedding(model_name=translate_model_name(args.model))
+    model.model.tokenizer.enable_truncation(args.max_seq_length)
     sentences = list(open(args.sentences).readlines())
 
     outfile = Path(
