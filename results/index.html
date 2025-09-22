@@ -146,6 +146,10 @@
             <label>Contestants:</label>
             <div id="contestantFilter" class="checkbox-group"></div>
           </div>
+          <div class="control-group">
+            <label>OS:</label>
+            <div id="osFilter" class="checkbox-group"></div>
+          </div>
         </div>
 
         <div class="stats" id="stats"></div>
@@ -173,10 +177,26 @@
       let filteredData = [];
       let colorMap = new Map(); // Store consistent colors for each contestant_device
       const plotlyColors = [
-        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-        '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
-        '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5',
-        '#c49c94', '#f7b6d3', '#c7c7c7', '#dbdb8d', '#9edae5'
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+        "#aec7e8",
+        "#ffbb78",
+        "#98df8a",
+        "#ff9896",
+        "#c5b0d5",
+        "#c49c94",
+        "#f7b6d3",
+        "#c7c7c7",
+        "#dbdb8d",
+        "#9edae5",
       ];
 
       // Load and process data
@@ -250,7 +270,9 @@
 
       // Initialize color mapping for consistent colors
       function initializeColorMap() {
-        const contestantDevices = [...new Set(allData.map((d) => d.contestant_device))].sort();
+        const contestantDevices = [
+          ...new Set(allData.map((d) => d.contestant_device)),
+        ].sort();
         contestantDevices.forEach((cd, index) => {
           colorMap.set(cd, plotlyColors[index % plotlyColors.length]);
         });
@@ -264,11 +286,13 @@
         const contestants = [
           ...new Set(allData.map((d) => d.contestant)),
         ].sort();
+        const oses = [...new Set(allData.map((d) => d.os))].sort();
 
         populateCheckboxGroup("modelFilter", models);
         populateCheckboxGroup("languageFilter", languages);
         populateCheckboxGroup("deviceFilter", devices);
         populateCheckboxGroup("contestantFilter", contestants);
+        populateCheckboxGroup("osFilter", oses);
 
         // Initialize sequence length selector
         const seqLengths = [
@@ -288,6 +312,7 @@
           optionElement.textContent = option;
           select.appendChild(optionElement);
         });
+        select.value = options.at(-1);
       }
 
       function populateCheckboxGroup(groupId, options) {
@@ -348,7 +373,7 @@
       function selectAllCheckboxes(groupId, checked) {
         const group = document.getElementById(groupId);
         const checkboxes = group.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => {
+        checkboxes.forEach((cb) => {
           cb.checked = checked;
         });
         updatePlots();
@@ -359,22 +384,27 @@
         const selectedModels = getSelectedCheckboxValues("modelFilter");
         const selectedLanguages = getSelectedCheckboxValues("languageFilter");
         const selectedDevices = getSelectedCheckboxValues("deviceFilter");
-        const selectedContestants = getSelectedCheckboxValues("contestantFilter");
+        const selectedContestants =
+          getSelectedCheckboxValues("contestantFilter");
+        const selectedOses = getSelectedCheckboxValues("osFilter");
 
         filteredData = allData.filter((d) => {
           return (
             selectedModels.includes(d.model) &&
             selectedLanguages.includes(d.language) &&
             selectedDevices.includes(d.device) &&
-            selectedContestants.includes(d.contestant)
+            selectedContestants.includes(d.contestant) &&
+            selectedOses.includes(d.os)
           );
         });
       }
 
       function getSelectedCheckboxValues(groupId) {
         const group = document.getElementById(groupId);
-        const checkboxes = group.querySelectorAll('input[type="checkbox"]:checked');
-        return Array.from(checkboxes).map(cb => cb.value);
+        const checkboxes = group.querySelectorAll(
+          'input[type="checkbox"]:checked',
+        );
+        return Array.from(checkboxes).map((cb) => cb.value);
       }
 
       // Update statistics display
@@ -468,8 +498,23 @@
         const seqLengthData = filteredData.filter(
           (d) => d.max_seq_length == selectedSeqLength,
         );
-        if (seqLengthData.length === 0) return;
 
+        if (seqLengthData.length === 0) {
+          Plotly.newPlot(
+            "batchSizeForSeqLengthPlot",
+            [],
+            {
+              title:
+                "No data matches current filters for selected sequence length",
+              height: 500,
+            },
+            {
+              responsive: true,
+              doubleClick: "reset",
+            },
+          );
+          return;
+        }
         const aggregated = aggregateData(seqLengthData, "batch_size");
         const contestantDevices = [
           ...new Set(aggregated.map((d) => d.contestant_device)),
@@ -511,9 +556,22 @@
         });
 
         const layout = {
-          title: `Batch Size Performance (Sequence Length = ${selectedSeqLength})`,
-          xaxis: { title: "Batch Size" },
-          yaxis: { title: "Mean Runtime (seconds)" },
+          title: {
+            text: `Performance  by batch size (Sequence Length = ${selectedSeqLength} tokens)`,
+            font: { size: 18 },
+          },
+          xaxis: {
+            title: {
+              text: "Batch Size",
+              font: { size: 14 },
+            },
+          },
+          yaxis: {
+            title: {
+              text: "Mean Runtime (seconds)",
+              font: { size: 14 },
+            },
+          },
           hovermode: "closest",
           showlegend: true,
           height: 500,
@@ -536,7 +594,21 @@
 
       // Create sequence length line plot with error bars
       function createSeqLengthLinePlot() {
-        if (filteredData.length === 0) return;
+        if (filteredData.length === 0) {
+          Plotly.newPlot(
+            "seqLengthLinePlot",
+            [],
+            {
+              title: "No data matches current filters",
+              height: 500,
+            },
+            {
+              responsive: true,
+              doubleClick: "reset",
+            },
+          );
+          return;
+        }
 
         const aggregated = aggregateData(filteredData, "max_seq_length");
         const contestantDevices = [
@@ -579,9 +651,22 @@
         });
 
         const layout = {
-          title: "Aggregated Performance by Sequence Length (Mean ± Std Dev)",
-          xaxis: { title: "Maximum Sequence Length" },
-          yaxis: { title: "Mean Runtime (seconds)" },
+          title: {
+            text: "Performance by Sequence Length",
+            font: { size: 18 },
+          },
+          xaxis: {
+            title: {
+              text: "Sequence length (tokens)",
+              font: { size: 14 },
+            },
+          },
+          yaxis: {
+            title: {
+              text: "Mean Runtime (seconds)",
+              font: { size: 14 },
+            },
+          },
           hovermode: "closest",
           showlegend: true,
           height: 500,
