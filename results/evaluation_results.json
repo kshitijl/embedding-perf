@@ -624,6 +624,19 @@
     "num_vectors": 1027
   },
   {
+    "contestant": "python-fastembed",
+    "model": "all-MiniLM-L6-v2",
+    "device": "cpu",
+    "seq_length": 128,
+    "batch_size": 128,
+    "mean_error": 1.6051594584224043e-07,
+    "median_error": 1.5719999999636025e-07,
+    "max_error": 3.254000000008084e-07,
+    "min_error": 9.299999999962116e-08,
+    "std_error": 3.1465039014315347e-08,
+    "num_vectors": 1027
+  },
+  {
     "contestant": "rust-cpp-libtorch-torchscript",
     "model": "all-MiniLM-L6-v2",
     "device": "mps",
