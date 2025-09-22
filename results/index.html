@@ -60,6 +60,52 @@
         background: white;
         font-size: 14px;
       }
+      .checkbox-group {
+        display: flex;
+        flex-direction: column;
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 10px;
+        background: white;
+        gap: 5px;
+      }
+      .checkbox-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        padding: 4px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .checkbox-item:hover {
+        background-color: #f0f7ff;
+      }
+      .checkbox-item input[type="checkbox"] {
+        margin: 0;
+      }
+      .select-buttons {
+        display: flex;
+        gap: 5px;
+        margin-bottom: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #eee;
+      }
+      .select-btn {
+        font-size: 12px;
+        padding: 2px 8px;
+        border: 1px solid #ddd;
+        background: #f8f9fa;
+        border-radius: 3px;
+        cursor: pointer;
+        color: #666;
+      }
+      .select-btn:hover {
+        background: #e9ecef;
+        color: #333;
+      }
       .loading {
         text-align: center;
         padding: 40px;
@@ -85,28 +131,20 @@
       <div id="content" style="display: none">
         <div class="controls">
           <div class="control-group">
-            <label for="modelFilter">Model:</label>
-            <select id="modelFilter">
-              <option value="all">All Models</option>
-            </select>
+            <label>Models:</label>
+            <div id="modelFilter" class="checkbox-group"></div>
           </div>
           <div class="control-group">
-            <label for="languageFilter">Language:</label>
-            <select id="languageFilter">
-              <option value="all">All Languages</option>
-            </select>
+            <label>Languages:</label>
+            <div id="languageFilter" class="checkbox-group"></div>
           </div>
           <div class="control-group">
-            <label for="deviceFilter">Device:</label>
-            <select id="deviceFilter">
-              <option value="all">All Devices</option>
-            </select>
+            <label>Devices:</label>
+            <div id="deviceFilter" class="checkbox-group"></div>
           </div>
           <div class="control-group">
-            <label for="contestantFilter">Contestant:</label>
-            <select id="contestantFilter">
-              <option value="all">All Contestants</option>
-            </select>
+            <label>Contestants:</label>
+            <div id="contestantFilter" class="checkbox-group"></div>
           </div>
         </div>
 
@@ -133,6 +171,13 @@
     <script>
       let allData = [];
       let filteredData = [];
+      let colorMap = new Map(); // Store consistent colors for each contestant_device
+      const plotlyColors = [
+        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+        '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+        '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5',
+        '#c49c94', '#f7b6d3', '#c7c7c7', '#dbdb8d', '#9edae5'
+      ];
 
       // Load and process data
       async function loadData() {
@@ -167,7 +212,7 @@
               // Create processed entry
               const processedEntry = {
                 ...entry,
-                contestant_device: `${entry.contestant} (${entry.device})`,
+                contestant_device: `${entry.contestant} [${entry.language}] (${entry.device})`,
                 filtered_run_times: filteredRunTimes,
                 mean_runtime: meanRuntime,
                 min_runtime: minRuntime,
@@ -192,7 +237,8 @@
           document.getElementById("loading").style.display = "none";
           document.getElementById("content").style.display = "block";
 
-          // Initialize filters and plots
+          // Initialize color mapping, filters and plots
+          initializeColorMap();
           initializeFilters();
           updatePlots();
         } catch (error) {
@@ -202,7 +248,15 @@
         }
       }
 
-      // Initialize filter dropdowns
+      // Initialize color mapping for consistent colors
+      function initializeColorMap() {
+        const contestantDevices = [...new Set(allData.map((d) => d.contestant_device))].sort();
+        contestantDevices.forEach((cd, index) => {
+          colorMap.set(cd, plotlyColors[index % plotlyColors.length]);
+        });
+      }
+
+      // Initialize filter checkboxes
       function initializeFilters() {
         const models = [...new Set(allData.map((d) => d.model))].sort();
         const languages = [...new Set(allData.map((d) => d.language))].sort();
@@ -211,20 +265,10 @@
           ...new Set(allData.map((d) => d.contestant)),
         ].sort();
 
-        populateSelect("modelFilter", models);
-        populateSelect("languageFilter", languages);
-        populateSelect("deviceFilter", devices);
-        populateSelect("contestantFilter", contestants);
-
-        // Add event listeners
-        [
-          "modelFilter",
-          "languageFilter",
-          "deviceFilter",
-          "contestantFilter",
-        ].forEach((id) => {
-          document.getElementById(id).addEventListener("change", updatePlots);
-        });
+        populateCheckboxGroup("modelFilter", models);
+        populateCheckboxGroup("languageFilter", languages);
+        populateCheckboxGroup("deviceFilter", devices);
+        populateCheckboxGroup("contestantFilter", contestants);
 
         // Initialize sequence length selector
         const seqLengths = [
@@ -246,22 +290,91 @@
         });
       }
 
+      function populateCheckboxGroup(groupId, options) {
+        const group = document.getElementById(groupId);
+
+        // Add select all/none buttons
+        const selectButtons = document.createElement("div");
+        selectButtons.className = "select-buttons";
+
+        const allBtn = document.createElement("button");
+        allBtn.textContent = "All";
+        allBtn.className = "select-btn";
+        allBtn.onclick = () => selectAllCheckboxes(groupId, true);
+
+        const noneBtn = document.createElement("button");
+        noneBtn.textContent = "None";
+        noneBtn.className = "select-btn";
+        noneBtn.onclick = () => selectAllCheckboxes(groupId, false);
+
+        selectButtons.appendChild(allBtn);
+        selectButtons.appendChild(noneBtn);
+        group.appendChild(selectButtons);
+
+        // Add checkboxes
+        options.forEach((option) => {
+          const checkboxItem = document.createElement("div");
+          checkboxItem.className = "checkbox-item";
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.id = `${groupId}_${option}`;
+          checkbox.value = option;
+          checkbox.checked = true; // Start with all selected
+          checkbox.addEventListener("change", updatePlots);
+
+          // Prevent checkbox click from bubbling to row click
+          checkbox.addEventListener("click", (e) => {
+            e.stopPropagation();
+          });
+
+          const label = document.createElement("span");
+          label.textContent = option;
+          label.style.margin = "0";
+          label.style.cursor = "pointer";
+
+          // Make entire row clickable
+          checkboxItem.addEventListener("click", () => {
+            checkbox.checked = !checkbox.checked;
+            updatePlots();
+          });
+
+          checkboxItem.appendChild(checkbox);
+          checkboxItem.appendChild(label);
+          group.appendChild(checkboxItem);
+        });
+      }
+
+      function selectAllCheckboxes(groupId, checked) {
+        const group = document.getElementById(groupId);
+        const checkboxes = group.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+          cb.checked = checked;
+        });
+        updatePlots();
+      }
+
       // Apply filters
       function applyFilters() {
-        const modelFilter = document.getElementById("modelFilter").value;
-        const languageFilter = document.getElementById("languageFilter").value;
-        const deviceFilter = document.getElementById("deviceFilter").value;
-        const contestantFilter =
-          document.getElementById("contestantFilter").value;
+        const selectedModels = getSelectedCheckboxValues("modelFilter");
+        const selectedLanguages = getSelectedCheckboxValues("languageFilter");
+        const selectedDevices = getSelectedCheckboxValues("deviceFilter");
+        const selectedContestants = getSelectedCheckboxValues("contestantFilter");
 
         filteredData = allData.filter((d) => {
           return (
-            (modelFilter === "all" || d.model === modelFilter) &&
-            (languageFilter === "all" || d.language === languageFilter) &&
-            (deviceFilter === "all" || d.device === deviceFilter) &&
-            (contestantFilter === "all" || d.contestant === contestantFilter)
+            selectedModels.includes(d.model) &&
+            selectedLanguages.includes(d.language) &&
+            selectedDevices.includes(d.device) &&
+            selectedContestants.includes(d.contestant)
           );
         });
+      }
+
+      function getSelectedCheckboxValues(groupId) {
+        const group = document.getElementById(groupId);
+        const checkboxes = group.querySelectorAll('input[type="checkbox"]:checked');
+        return Array.from(checkboxes).map(cb => cb.value);
       }
 
       // Update statistics display
@@ -392,8 +505,8 @@
                 `Range: ${d.min_runtime.toFixed(3)}s - ${d.max_runtime.toFixed(3)}s`,
             ),
             hovertemplate: "%{text}<extra></extra>",
-            line: { width: 2 },
-            marker: { size: 6 },
+            line: { width: 2, color: colorMap.get(cd) },
+            marker: { size: 6, color: colorMap.get(cd) },
           });
         });
 
@@ -460,8 +573,8 @@
                 `Range: ${d.min_runtime.toFixed(3)}s - ${d.max_runtime.toFixed(3)}s`,
             ),
             hovertemplate: "%{text}<extra></extra>",
-            line: { width: 2 },
-            marker: { size: 6 },
+            line: { width: 2, color: colorMap.get(cd) },
+            marker: { size: 6, color: colorMap.get(cd) },
           });
         });
 
