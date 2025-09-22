@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Embedding Performance Benchmarks</title>
+    <script
+      src="https://cdn.plot.ly/plotly-3.1.0.min.js"
+      charset="utf-8"
+    ></script>
+    <style>
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f8f9fa;
+      }
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      h1 {
+        text-align: center;
+        color: #333;
+        margin-bottom: 30px;
+      }
+      .plot-container {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        margin: 20px 0;
+        padding: 20px;
+      }
+      .controls {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        margin: 20px 0;
+        padding: 20px;
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      label {
+        font-weight: 600;
+        color: #555;
+        font-size: 14px;
+      }
+      select {
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: white;
+        font-size: 14px;
+      }
+      .checkbox-group {
+        display: flex;
+        flex-direction: column;
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 10px;
+        background: white;
+        gap: 5px;
+      }
+      .checkbox-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        padding: 4px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .checkbox-item:hover {
+        background-color: #f0f7ff;
+      }
+      .checkbox-item input[type="checkbox"] {
+        margin: 0;
+      }
+      .select-buttons {
+        display: flex;
+        gap: 5px;
+        margin-bottom: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #eee;
+      }
+      .select-btn {
+        font-size: 12px;
+        padding: 2px 8px;
+        border: 1px solid #ddd;
+        background: #f8f9fa;
+        border-radius: 3px;
+        cursor: pointer;
+        color: #666;
+      }
+      .select-btn:hover {
+        background: #e9ecef;
+        color: #333;
+      }
+      .loading {
+        text-align: center;
+        padding: 40px;
+        color: #666;
+      }
+      .stats {
+        background: #f0f7ff;
+        border: 1px solid #b3d9ff;
+        border-radius: 6px;
+        padding: 15px;
+        margin: 15px 0;
+        font-size: 14px;
+        color: #0066cc;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Embedding Performance Benchmarks</h1>
+
+      <div class="loading" id="loading">Loading benchmark data...</div>
+
+      <div id="content" style="display: none">
+        <div class="controls">
+          <div class="control-group">
+            <label>Models:</label>
+            <div id="modelFilter" class="checkbox-group"></div>
+          </div>
+          <div class="control-group">
+            <label>Languages:</label>
+            <div id="languageFilter" class="checkbox-group"></div>
+          </div>
+          <div class="control-group">
+            <label>Devices:</label>
+            <div id="deviceFilter" class="checkbox-group"></div>
+          </div>
+          <div class="control-group">
+            <label>Contestants:</label>
+            <div id="contestantFilter" class="checkbox-group"></div>
+          </div>
+          <div class="control-group">
+            <label>OS:</label>
+            <div id="osFilter" class="checkbox-group"></div>
+          </div>
+        </div>
+
+        <div class="stats" id="stats"></div>
+
+        <div class="plot-container">
+          <div id="seqLengthLinePlot"></div>
+        </div>
+
+        <div class="plot-container">
+          <div class="controls" style="margin: 0 0 15px 0">
+            <div class="control-group">
+              <label for="seqLengthSelect">Sequence Length:</label>
+              <select id="seqLengthSelect">
+                <option value="">Select sequence length...</option>
+              </select>
+            </div>
+          </div>
+          <div id="batchSizeForSeqLengthPlot"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let allData = [];
+      let filteredData = [];
+      let colorMap = new Map(); // Store consistent colors for each contestant_device
+      const plotlyColors = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+        "#aec7e8",
+        "#ffbb78",
+        "#98df8a",
+        "#ff9896",
+        "#c5b0d5",
+        "#c49c94",
+        "#f7b6d3",
+        "#c7c7c7",
+        "#dbdb8d",
+        "#9edae5",
+      ];
+
+      // Load and process data
+      async function loadData() {
+        try {
+          const response = await fetch("all_benchmarks.jsonl");
+          const text = await response.text();
+
+          const lines = text
+            .trim()
+            .split("\n")
+            .filter((line) => line.trim());
+          allData = [];
+
+          for (const line of lines) {
+            try {
+              const entry = JSON.parse(line);
+
+              // Filter out first 2 run_times entries
+              const runTimes = entry.run_times || [];
+              if (runTimes.length < 2) continue;
+
+              const filteredRunTimes = runTimes.slice(2);
+              if (filteredRunTimes.length === 0) continue;
+
+              // Calculate statistics
+              const meanRuntime =
+                filteredRunTimes.reduce((a, b) => a + b, 0) /
+                filteredRunTimes.length;
+              const minRuntime = Math.min(...filteredRunTimes);
+              const maxRuntime = Math.max(...filteredRunTimes);
+
+              // Create processed entry
+              const processedEntry = {
+                ...entry,
+                contestant_device: `${entry.contestant} [${entry.language}] (${entry.device})`,
+                filtered_run_times: filteredRunTimes,
+                mean_runtime: meanRuntime,
+                min_runtime: minRuntime,
+                max_runtime: maxRuntime,
+                std_runtime: Math.sqrt(
+                  filteredRunTimes.reduce(
+                    (a, b) => a + (b - meanRuntime) ** 2,
+                    0,
+                  ) / filteredRunTimes.length,
+                ),
+              };
+
+              allData.push(processedEntry);
+            } catch (e) {
+              console.warn("Failed to parse line:", line);
+            }
+          }
+
+          console.log(`Loaded ${allData.length} benchmark entries`);
+
+          // Hide loading, show content
+          document.getElementById("loading").style.display = "none";
+          document.getElementById("content").style.display = "block";
+
+          // Initialize color mapping, filters and plots
+          initializeColorMap();
+          initializeFilters();
+          updatePlots();
+        } catch (error) {
+          console.error("Failed to load data:", error);
+          document.getElementById("loading").textContent =
+            "Failed to load benchmark data. Make sure to run build.sh first.";
+        }
+      }
+
+      // Initialize color mapping for consistent colors
+      function initializeColorMap() {
+        const contestantDevices = [
+          ...new Set(allData.map((d) => d.contestant_device)),
+        ].sort();
+        contestantDevices.forEach((cd, index) => {
+          colorMap.set(cd, plotlyColors[index % plotlyColors.length]);
+        });
+      }
+
+      // Initialize filter checkboxes
+      function initializeFilters() {
+        const models = [...new Set(allData.map((d) => d.model))].sort();
+        const languages = [...new Set(allData.map((d) => d.language))].sort();
+        const devices = [...new Set(allData.map((d) => d.device))].sort();
+        const contestants = [
+          ...new Set(allData.map((d) => d.contestant)),
+        ].sort();
+        const oses = [...new Set(allData.map((d) => d.os))].sort();
+
+        populateCheckboxGroup("modelFilter", models);
+        populateCheckboxGroup("languageFilter", languages);
+        populateCheckboxGroup("deviceFilter", devices);
+        populateCheckboxGroup("contestantFilter", contestants);
+        populateCheckboxGroup("osFilter", oses);
+
+        // Initialize sequence length selector
+        const seqLengths = [
+          ...new Set(allData.map((d) => d.max_seq_length)),
+        ].sort((a, b) => a - b);
+        populateSelect("seqLengthSelect", seqLengths);
+        document
+          .getElementById("seqLengthSelect")
+          .addEventListener("change", updateBatchSizeForSeqLengthPlot);
+      }
+
+      function populateSelect(selectId, options) {
+        const select = document.getElementById(selectId);
+        options.forEach((option) => {
+          const optionElement = document.createElement("option");
+          optionElement.value = option;
+          optionElement.textContent = option;
+          select.appendChild(optionElement);
+        });
+        select.value = options.at(-1);
+      }
+
+      function populateCheckboxGroup(groupId, options) {
+        const group = document.getElementById(groupId);
+
+        // Add select all/none buttons
+        const selectButtons = document.createElement("div");
+        selectButtons.className = "select-buttons";
+
+        const allBtn = document.createElement("button");
+        allBtn.textContent = "All";
+        allBtn.className = "select-btn";
+        allBtn.onclick = () => selectAllCheckboxes(groupId, true);
+
+        const noneBtn = document.createElement("button");
+        noneBtn.textContent = "None";
+        noneBtn.className = "select-btn";
+        noneBtn.onclick = () => selectAllCheckboxes(groupId, false);
+
+        selectButtons.appendChild(allBtn);
+        selectButtons.appendChild(noneBtn);
+        group.appendChild(selectButtons);
+
+        // Add checkboxes
+        options.forEach((option) => {
+          const checkboxItem = document.createElement("div");
+          checkboxItem.className = "checkbox-item";
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.id = `${groupId}_${option}`;
+          checkbox.value = option;
+          checkbox.checked = true; // Start with all selected
+          checkbox.addEventListener("change", updatePlots);
+
+          // Prevent checkbox click from bubbling to row click
+          checkbox.addEventListener("click", (e) => {
+            e.stopPropagation();
+          });
+
+          const label = document.createElement("span");
+          label.textContent = option;
+          label.style.margin = "0";
+          label.style.cursor = "pointer";
+
+          // Make entire row clickable
+          checkboxItem.addEventListener("click", () => {
+            checkbox.checked = !checkbox.checked;
+            updatePlots();
+          });
+
+          checkboxItem.appendChild(checkbox);
+          checkboxItem.appendChild(label);
+          group.appendChild(checkboxItem);
+        });
+      }
+
+      function selectAllCheckboxes(groupId, checked) {
+        const group = document.getElementById(groupId);
+        const checkboxes = group.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach((cb) => {
+          cb.checked = checked;
+        });
+        updatePlots();
+      }
+
+      // Apply filters
+      function applyFilters() {
+        const selectedModels = getSelectedCheckboxValues("modelFilter");
+        const selectedLanguages = getSelectedCheckboxValues("languageFilter");
+        const selectedDevices = getSelectedCheckboxValues("deviceFilter");
+        const selectedContestants =
+          getSelectedCheckboxValues("contestantFilter");
+        const selectedOses = getSelectedCheckboxValues("osFilter");
+
+        filteredData = allData.filter((d) => {
+          return (
+            selectedModels.includes(d.model) &&
+            selectedLanguages.includes(d.language) &&
+            selectedDevices.includes(d.device) &&
+            selectedContestants.includes(d.contestant) &&
+            selectedOses.includes(d.os)
+          );
+        });
+      }
+
+      function getSelectedCheckboxValues(groupId) {
+        const group = document.getElementById(groupId);
+        const checkboxes = group.querySelectorAll(
+          'input[type="checkbox"]:checked',
+        );
+        return Array.from(checkboxes).map((cb) => cb.value);
+      }
+
+      // Update statistics display
+      function updateStats() {
+        const stats = document.getElementById("stats");
+        if (filteredData.length === 0) {
+          stats.textContent = "No data matches current filters.";
+          return;
+        }
+
+        const runtimes = filteredData.map((d) => d.mean_runtime);
+        const fastest = Math.min(...runtimes);
+        const slowest = Math.max(...runtimes);
+        const avgRuntime =
+          runtimes.reduce((a, b) => a + b, 0) / runtimes.length;
+
+        const fastestEntry = filteredData.find(
+          (d) => d.mean_runtime === fastest,
+        );
+        const slowestEntry = filteredData.find(
+          (d) => d.mean_runtime === slowest,
+        );
+
+        stats.innerHTML = `
+                <strong>Dataset:</strong> ${filteredData.length} configurations |
+                <strong>Fastest:</strong> ${fastest.toFixed(3)}s (${fastestEntry.contestant_device}, batch=${fastestEntry.batch_size}) |
+                <strong>Slowest:</strong> ${slowest.toFixed(3)}s (${slowestEntry.contestant_device}, batch=${slowestEntry.batch_size}) |
+                <strong>Average:</strong> ${avgRuntime.toFixed(3)}s
+            `;
+      }
+
+      // Aggregate data by contestant-device and grouping variable (batch_size or seq_length)
+      function aggregateData(data, groupVar) {
+        const grouped = {};
+
+        data.forEach((d) => {
+          const key = `${d.contestant_device}_${d[groupVar]}`;
+          if (!grouped[key]) {
+            grouped[key] = {
+              contestant_device: d.contestant_device,
+              [groupVar]: d[groupVar],
+              runtimes: [],
+              model: d.model,
+              language: d.language,
+            };
+          }
+          grouped[key].runtimes.push(d.mean_runtime);
+        });
+
+        // Calculate statistics for each group
+        return Object.values(grouped).map((group) => {
+          const runtimes = group.runtimes;
+          const mean = runtimes.reduce((a, b) => a + b, 0) / runtimes.length;
+          const variance =
+            runtimes.reduce((a, b) => a + (b - mean) ** 2, 0) / runtimes.length;
+          const stdev = Math.sqrt(variance);
+
+          return {
+            ...group,
+            mean_runtime: mean,
+            std_runtime: stdev,
+            min_runtime: Math.min(...runtimes),
+            max_runtime: Math.max(...runtimes),
+            count: runtimes.length,
+          };
+        });
+      }
+
+      // Create batch size plot for selected sequence length
+      function createBatchSizeForSeqLengthPlot() {
+        const selectedSeqLength =
+          document.getElementById("seqLengthSelect").value;
+
+        if (!selectedSeqLength || filteredData.length === 0) {
+          // Clear the plot if no sequence length selected
+          Plotly.newPlot(
+            "batchSizeForSeqLengthPlot",
+            [],
+            {
+              title: "Select a sequence length to view batch size performance",
+              height: 400,
+            },
+            {
+              responsive: true,
+              doubleClick: "reset",
+            },
+          );
+          return;
+        }
+
+        const seqLengthData = filteredData.filter(
+          (d) => d.max_seq_length == selectedSeqLength,
+        );
+
+        if (seqLengthData.length === 0) {
+          Plotly.newPlot(
+            "batchSizeForSeqLengthPlot",
+            [],
+            {
+              title:
+                "No data matches current filters for selected sequence length",
+              height: 500,
+            },
+            {
+              responsive: true,
+              doubleClick: "reset",
+            },
+          );
+          return;
+        }
+        const aggregated = aggregateData(seqLengthData, "batch_size");
+        const contestantDevices = [
+          ...new Set(aggregated.map((d) => d.contestant_device)),
+        ];
+        const traces = [];
+
+        contestantDevices.forEach((cd) => {
+          const data = aggregated
+            .filter((d) => d.contestant_device === cd)
+            .sort((a, b) => a.batch_size - b.batch_size);
+
+          if (data.length === 0) return;
+
+          traces.push({
+            x: data.map((d) => d.batch_size),
+            y: data.map((d) => d.mean_runtime),
+            error_y: {
+              type: "data",
+              array: data.map((d) => d.std_runtime),
+              visible: true,
+            },
+            mode: "lines+markers",
+            type: "scatter",
+            name: cd,
+            text: data.map(
+              (d) =>
+                `${d.contestant_device}<br>` +
+                `Language: ${d.language}<br>` +
+                `Batch Size: ${d.batch_size}<br>` +
+                `Mean Runtime: ${d.mean_runtime.toFixed(3)}s<br>` +
+                `Std Dev: ${d.std_runtime.toFixed(3)}s<br>` +
+                `Count: ${d.count} runs<br>` +
+                `Range: ${d.min_runtime.toFixed(3)}s - ${d.max_runtime.toFixed(3)}s`,
+            ),
+            hovertemplate: "%{text}<extra></extra>",
+            line: { width: 2, color: colorMap.get(cd) },
+            marker: { size: 6, color: colorMap.get(cd) },
+          });
+        });
+
+        const layout = {
+          title: {
+            text: `Performance  by batch size (Sequence Length = ${selectedSeqLength} tokens)`,
+            font: { size: 18 },
+          },
+          xaxis: {
+            title: {
+              text: "Batch Size",
+              font: { size: 14 },
+            },
+          },
+          yaxis: {
+            title: {
+              text: "Mean Runtime (seconds)",
+              font: { size: 14 },
+            },
+          },
+          hovermode: "closest",
+          showlegend: true,
+          height: 500,
+        };
+
+        const config = {
+          responsive: true,
+          doubleClick: "reset",
+          displayModeBar: true,
+          displaylogo: false,
+        };
+
+        Plotly.newPlot("batchSizeForSeqLengthPlot", traces, layout, config);
+      }
+
+      // Update batch size plot when selection changes
+      function updateBatchSizeForSeqLengthPlot() {
+        createBatchSizeForSeqLengthPlot();
+      }
+
+      // Create sequence length line plot with error bars
+      function createSeqLengthLinePlot() {
+        if (filteredData.length === 0) {
+          Plotly.newPlot(
+            "seqLengthLinePlot",
+            [],
+            {
+              title: "No data matches current filters",
+              height: 500,
+            },
+            {
+              responsive: true,
+              doubleClick: "reset",
+            },
+          );
+          return;
+        }
+
+        const aggregated = aggregateData(filteredData, "max_seq_length");
+        const contestantDevices = [
+          ...new Set(aggregated.map((d) => d.contestant_device)),
+        ];
+        const traces = [];
+
+        contestantDevices.forEach((cd) => {
+          const data = aggregated
+            .filter((d) => d.contestant_device === cd)
+            .sort((a, b) => a.max_seq_length - b.max_seq_length);
+
+          if (data.length === 0) return;
+
+          traces.push({
+            x: data.map((d) => d.max_seq_length),
+            y: data.map((d) => d.mean_runtime),
+            error_y: {
+              type: "data",
+              array: data.map((d) => d.std_runtime),
+              visible: true,
+            },
+            mode: "lines+markers",
+            type: "scatter",
+            name: cd,
+            text: data.map(
+              (d) =>
+                `${d.contestant_device}<br>` +
+                `Language: ${d.language}<br>` +
+                `Seq Length: ${d.max_seq_length}<br>` +
+                `Mean Runtime: ${d.mean_runtime.toFixed(3)}s<br>` +
+                `Std Dev: ${d.std_runtime.toFixed(3)}s<br>` +
+                `Count: ${d.count} runs<br>` +
+                `Range: ${d.min_runtime.toFixed(3)}s - ${d.max_runtime.toFixed(3)}s`,
+            ),
+            hovertemplate: "%{text}<extra></extra>",
+            line: { width: 2, color: colorMap.get(cd) },
+            marker: { size: 6, color: colorMap.get(cd) },
+          });
+        });
+
+        const layout = {
+          title: {
+            text: "Performance by Sequence Length",
+            font: { size: 18 },
+          },
+          xaxis: {
+            title: {
+              text: "Sequence length (tokens)",
+              font: { size: 14 },
+            },
+          },
+          yaxis: {
+            title: {
+              text: "Mean Runtime (seconds)",
+              font: { size: 14 },
+            },
+          },
+          hovermode: "closest",
+          showlegend: true,
+          height: 500,
+        };
+
+        const config = {
+          responsive: true,
+          doubleClick: "reset",
+          displayModeBar: true,
+          displaylogo: false,
+        };
+
+        Plotly.newPlot("seqLengthLinePlot", traces, layout, config);
+      }
+
+      // Update all plots
+      function updatePlots() {
+        applyFilters();
+        updateStats();
+        createSeqLengthLinePlot();
+        createBatchSizeForSeqLengthPlot();
+      }
+
+      // Load data when page loads
+      loadData();
+    </script>
+  </body>
+</html>

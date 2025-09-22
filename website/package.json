@@ -1,0 +1,14 @@
+{
+  "name": "embedperf",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "just build-results; cp ../results/index.html public/; cp ../results/all_benchmarks.jsonl public/;",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.38.0"
+  }
+}

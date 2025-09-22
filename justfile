@@ -3,6 +3,12 @@ BUILD_DIR := "contestants/cpp-libtorch-torchscript/build"
 
 default: evaluate
 
+build-results:
+    pushd results; ./build.sh
+
+deploy-website: 
+    pushd website; yarn build; yarn deploy
+
 evaluate:
     uv run --directory results evaluate-correctness.py
 
