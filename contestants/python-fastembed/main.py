@@ -111,6 +111,7 @@ def main():
     benchmark_result = {
         "contestant": "onnxruntime",
         "language": "python",
+        "os": "macos",
         "model": args.model,
         "device": args.device,
         "runtime": "onnx",

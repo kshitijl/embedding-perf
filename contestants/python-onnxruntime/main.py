@@ -41,7 +41,7 @@ def load_tokenized_input(file_path: Path, max_seq_length: int) -> Dict[str, np.n
     all_attention_masks = []
     all_token_type_ids = []
 
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -51,15 +51,19 @@ def load_tokenized_input(file_path: Path, max_seq_length: int) -> Dict[str, np.n
                 data = json.loads(line)
 
                 # Extract arrays (they come nested as [[...]])
-                input_ids = data['input_ids'][0]
-                attention_mask = data['attention_mask'][0]
-                token_type_ids = data.get('token_type_ids', [[]])[0] if data.get('token_type_ids') else [0] * len(input_ids)
+                input_ids = data["input_ids"][0]
+                attention_mask = data["attention_mask"][0]
+                token_type_ids = (
+                    data.get("token_type_ids", [[]])[0]
+                    if data.get("token_type_ids")
+                    else [0] * len(input_ids)
+                )
 
                 # Handle truncation and padding like Rust implementation
                 if len(input_ids) > max_seq_length:
-                    input_ids = input_ids[:max_seq_length - 1] + [102]  # Add SEP token
-                    attention_mask = attention_mask[:max_seq_length - 1] + [1]
-                    token_type_ids = token_type_ids[:max_seq_length - 1] + [0]
+                    input_ids = input_ids[: max_seq_length - 1] + [102]  # Add SEP token
+                    attention_mask = attention_mask[: max_seq_length - 1] + [1]
+                    token_type_ids = token_type_ids[: max_seq_length - 1] + [0]
 
                 # Pad to max_seq_length
                 while len(input_ids) < max_seq_length:
@@ -79,9 +83,9 @@ def load_tokenized_input(file_path: Path, max_seq_length: int) -> Dict[str, np.n
                 continue
 
     return {
-        'input_ids': np.array(all_input_ids, dtype=np.int64),
-        'attention_mask': np.array(all_attention_masks, dtype=np.int64),
-        'token_type_ids': np.array(all_token_type_ids, dtype=np.int64)
+        "input_ids": np.array(all_input_ids, dtype=np.int64),
+        "attention_mask": np.array(all_attention_masks, dtype=np.int64),
+        "token_type_ids": np.array(all_token_type_ids, dtype=np.int64),
     }
 
 
@@ -94,9 +98,9 @@ def embed_from_tokens(
     Generates embeddings from pre-tokenized input using an ONNX model.
     """
     all_embeddings = []
-    input_ids = tokenized_input['input_ids']
-    attention_mask = tokenized_input['attention_mask']
-    token_type_ids = tokenized_input['token_type_ids']
+    input_ids = tokenized_input["input_ids"]
+    attention_mask = tokenized_input["attention_mask"]
+    token_type_ids = tokenized_input["token_type_ids"]
 
     num_samples = len(input_ids)
 
@@ -104,9 +108,9 @@ def embed_from_tokens(
     pbar = tqdm(total=num_samples, desc="Embedding sentences", unit="sentence")
 
     for i in range(0, num_samples, batch_size):
-        batch_input_ids = input_ids[i:i + batch_size]
-        batch_attention_mask = attention_mask[i:i + batch_size]
-        batch_token_type_ids = token_type_ids[i:i + batch_size]
+        batch_input_ids = input_ids[i : i + batch_size]
+        batch_attention_mask = attention_mask[i : i + batch_size]
+        batch_token_type_ids = token_type_ids[i : i + batch_size]
 
         # Prepare the model inputs for ONNX Runtime
         model_inputs = {
@@ -191,13 +195,17 @@ def main():
 
     model_path = repo_root / f"models/onnx/{args.model}"
     onnx_model_file = model_path / "model.onnx"
-    tokenized_input_file = repo_root / f"data/reference-output/{args.model}/tokenized.txt"
+    tokenized_input_file = (
+        repo_root / f"data/reference-output/{args.model}/tokenized.txt"
+    )
 
     if not onnx_model_file.exists():
         raise FileNotFoundError(f"Could not find 'model.onnx' in {model_path}")
 
     if not tokenized_input_file.exists():
-        raise FileNotFoundError(f"Could not find tokenized input at {tokenized_input_file}")
+        raise FileNotFoundError(
+            f"Could not find tokenized input at {tokenized_input_file}"
+        )
 
     start_total = time.time()
 
@@ -236,11 +244,12 @@ def main():
     total_time = end_total - start_total
 
     # Calculate num_tokens (total non-padding tokens for one full run)
-    num_tokens = int(np.sum(tokenized_input['attention_mask']))
+    num_tokens = int(np.sum(tokenized_input["attention_mask"]))
 
     benchmark_result = {
         "contestant": "onnxruntime",
         "language": "python",
+        "os": "macos",
         "model": args.model,
         "device": args.device,
         "runtime": "onnx",

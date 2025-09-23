@@ -435,6 +435,7 @@ int main(int argc, char** argv) {
     std::string contestant_name = "libtorch-ts-" + blas_name;
     json benchmark_result = {{"contestant", contestant_name},
                              {"language", "cpp"},
+                             {"os", "macos"},
                              {"model", model},
                              {"device", device},
                              {"max_seq_length", max_seq_length},

@@ -95,13 +95,22 @@ def main():
 
     # Calculate num_tokens by tokenizing sentences and counting non-padding tokens
     tokenizer = model.tokenizer
-    tokenized = tokenizer(sentences, padding=True, truncation=True, max_length=args.max_seq_length, return_attention_mask=True)
+    tokenized = tokenizer(
+        sentences,
+        padding=True,
+        truncation=True,
+        max_length=args.max_seq_length,
+        return_attention_mask=True,
+    )
     # Count total non-padding tokens (where attention_mask == 1)
-    num_tokens = sum(sum(attention_mask) for attention_mask in tokenized['attention_mask'])
+    num_tokens = sum(
+        sum(attention_mask) for attention_mask in tokenized["attention_mask"]
+    )
 
     benchmark_result = {
         "contestant": "sentence-transformers-accelerate",
         "language": "python",
+        "os": "macos",
         "model": args.model,
         "device": args.device,
         "max_seq_length": args.max_seq_length,
