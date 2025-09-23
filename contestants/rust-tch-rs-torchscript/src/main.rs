@@ -132,6 +132,7 @@ impl EmbedderModel {
 #[derive(Serialize)]
 struct BenchmarkResult {
     contestant: String,
+    os: String,
     language: String,
     model: String,
     device: String,
@@ -406,6 +407,7 @@ fn main() -> Result<()> {
 
     let benchmark_result = BenchmarkResult {
         language: "rust".to_string(),
+        os: "macos".to_string(),
         contestant: format!("tch-ts-{}", blas),
         model: args.model.clone(),
         device: args.device.to_string(),
