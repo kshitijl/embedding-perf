@@ -4,6 +4,7 @@ RUST_CPP_LIBTORCH_TS_DIR := "contestants/rust-cpp-libtorch-ts"
 RUST_CPP_LIBTORCH_TS_BUILD_DIR := RUST_CPP_LIBTORCH_TS_DIR + "/cpp-wrapper/build"
 RUST_TCH_TS_DIR := "contestants/rust-tch-ts"
 RUST_TCH_TS_LIBTORCH_DIR := "~/Downloads/libtorch-2.7.0"
+RUST_CANDLE_DIR := "contestants/rust-candle"
 
 default: evaluate
 
@@ -21,8 +22,19 @@ generate_reference_data:
 
 rebuild-all: clean-all build-all
 
-clean-all: clean-cpp-libtorch-ts clean-rust-cpp-libtorch-ts clean-rust-tch-ts
-build-all: build-cpp-libtorch-ts build-rust-cpp-libtorch-ts build-rust-tch-ts
+clean-all: clean-cpp-libtorch-ts clean-rust-cpp-libtorch-ts clean-rust-tch-ts clean-rust-candle
+build-all: typecheck-python build-cpp-libtorch-ts build-rust-cpp-libtorch-ts build-rust-tch-ts build-rust-candle
+
+typecheck-python:
+    uvx ty check
+
+# rust-candle
+
+clean-rust-candle:
+    cd {{RUST_CANDLE_DIR}} && cargo clean
+
+build-rust-candle:
+    cd {{RUST_CANDLE_DIR}} && cargo build --release    
 
 # rust-tch-ts
 
