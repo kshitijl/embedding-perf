@@ -125,7 +125,9 @@
   <body>
     <div class="container">
       <h1>Embedding Performance Benchmarks</h1>
-
+      See <a href="https://github.com/kshitijl/embedding-perf">the repo</a> for
+      code.
+      <a href="#explanation">How the benchmark was run</a>
       <div class="loading" id="loading">Loading benchmark data...</div>
 
       <div id="content" style="display: none">
@@ -170,6 +172,50 @@
           <div id="batchSizeForSeqLengthPlot"></div>
         </div>
       </div>
+    </div>
+
+    <div class="explanation">
+      <h1>How the benchmarks were run</h1>
+      K Lauria (he) (F1'25): The short version is: We begin with Bleak House,
+      Charles Dickens's classic 19th century novel of justice, London and
+      bureaucracy. We break it up into sentences I wrote the code for each
+      combination of library and language (with lots of wonderful help from LLMs
+      in translating initial implementations and looking up documentation and
+      stuff) I also tokenized the input separately and wrote that in a file (see
+      the data directory in the repo) I also ran a reference implementation to
+      generate embeddings, so I can check every other implemention (in
+      data/reference-output) Each contestant does the following: load the model
+      and the pre-tokenized input, then run 2 warmup batches, then 3 production
+      batches for measuring. It writes the actual embeddings to a file and also
+      the benchmark results to a jsonl file (one json per line). Then there's a
+      script to check that all the results match (see
+      results/evaluate-correctness.py). This caught a LOT of problems! I got LLM
+      help to do the matplotlib output stuff because I hate dealing with
+      matplotlib. All the benchmark results are concatenated together into one
+      giant jsonl file (see results/build.sh and results/all_benchmarks.jsonl)
+      The frontend is a self-contained index.html file with some javascript code
+      that fetches that big json file and draws some plots. Full code is here:
+      https://github.com/kshitijl/embedding-perfK Lauria (he) (F1'25): The code
+      for each contestant is self-contained and lives inside each directory
+      under contestant. There's a run-all.sh script in each of those directories
+      to run all combinations of batch size, sequence length and device. Some
+      contestants need special flags like DYLD stuff to get the different BLAS
+      implementations for libtorch. Other ones only work on CPU on mac. All that
+      is handled in a combination of the run-all.sh and in the code itself.K
+      Lauria (he) (F1'25): LLM disclosure: the frontend is very heavily LLM
+      generated but I did read it and added some features myself so I understand
+      the code and mostly think it doesn't have huge bugs, at least not in a way
+      that would change someone's evaluation of the benchmark results.K Lauria
+      (he) (F1'25): One cool thing is that this repo contains a self-contained
+      implementation of how to run each library, so someone who wants example
+      code to try them out can just steal it from this one place.K Lauria (he)
+      (F1'25): I'll be writing up the results and making a helpful
+      shopping/comparison type widget to help other people pick the right
+      language and library for their task. I worked with @Meghna Dholakia (she)
+      (F2'19) over the weekend to design how that might workK Lauria (he)
+      (F1'25): And I'm going to be adding more libraries, for example tch-rs
+      (rust), Candle (rust), ctranslate2 (python) and mlx (probably the Python
+      bindings first, and if the performance is good then C++)
     </div>
 
     <script>

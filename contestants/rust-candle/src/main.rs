@@ -103,7 +103,10 @@ impl EmbedderModel {
         }
 
         let unpooled = Tensor::cat(&all_batch_embeddings, 0)?;
-        let attention_mask_3d = attention_masks_tensor.unsqueeze(2)?.to_dtype(BERT_DTYPE)?;
+        let attention_mask_3d = attention_masks_tensor
+            .unsqueeze(2)?
+            .to_dtype(BERT_DTYPE)?
+            .to_device(&CandleDevice::Cpu)?;
         let embeddings = (unpooled.broadcast_mul(&attention_mask_3d)?).sum(1)?;
         let sum_mask = attention_mask_3d.sum(1)?;
         let embeddings = embeddings.broadcast_div(&sum_mask)?;
