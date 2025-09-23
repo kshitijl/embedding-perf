@@ -1,54 +1,37 @@
 use anyhow::{Error as E, Result};
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::os::raw::{c_char, c_int, c_long, c_uint};
+use std::os::raw::{c_char, c_uint};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
-
-unsafe extern "C" {
-    fn embedder_load_model(model_path: *const c_char, use_mps: c_int) -> *mut std::ffi::c_void;
-    fn embedder_free_model(model_handle: *mut std::ffi::c_void);
-    fn embedder_embed(
-        model_handle: *mut std::ffi::c_void,
-        input_ids: *const i64,
-        attention_mask: *const i64,
-        total_samples: c_long,
-        seq_length: c_long,
-        processing_batch_size: c_long,
-        output_embeddings: *mut f32,
-        output_buffer_size_in_bytes: c_long,
-    ) -> c_long;
-}
+use tch::{self, IValue, Tensor};
 
 struct EmbedderModel {
-    handle: *mut std::ffi::c_void,
+    model: tch::CModule,
+    device: tch::Device,
     embedding_dim: usize,
 }
 
 impl EmbedderModel {
     fn load(model_path: &Path, device: Device, embedding_dim: usize) -> Result<Self> {
-        let c_path = CString::new(model_path.to_string_lossy().as_ref()).map_err(E::msg)?;
-
-        let use_mps = match device {
-            Device::Mps => 1,
-            Device::Cpu => 0,
+        let tch_device = match device {
+            Device::Cpu => tch::Device::Cpu,
+            Device::Mps => tch::Device::Mps,
         };
 
-        let handle = unsafe { embedder_load_model(c_path.as_ptr(), use_mps) };
+        let mut model = tch::CModule::load_on_device(&model_path, tch_device)?;
+        model.set_eval();
 
-        if handle.is_null() {
-            Err(E::msg("failed to load model"))
-        } else {
-            Ok(EmbedderModel {
-                handle,
-                embedding_dim,
-            })
-        }
+        Ok(EmbedderModel {
+            model,
+            embedding_dim,
+            device: tch_device,
+        })
     }
 
     fn embed_batch(
@@ -56,10 +39,11 @@ impl EmbedderModel {
         input_ids: &[Vec<i64>],
         attention_masks: &[Vec<i64>],
         processing_batch_size: usize,
-    ) -> Result<Vec<Vec<f32>>> {
+    ) -> Result<Vec<f32>> {
         if input_ids.is_empty() {
             return Ok(vec![]);
         }
+        let _guard = tch::no_grad_guard();
 
         let total_samples = input_ids.len();
         let seq_length = input_ids[0].len();
@@ -73,44 +57,75 @@ impl EmbedderModel {
         let flat_input_ids: Vec<i64> = input_ids.iter().flatten().copied().collect();
         let flat_attention_mask: Vec<i64> = attention_masks.iter().flatten().copied().collect();
 
-        let output_size = total_samples * self.embedding_dim;
-        let mut output = vec![0.0f32; output_size];
-        let output_buffer_size_in_bytes = output_size * size_of::<f32>();
+        let input_ids_tensor = Tensor::from_slice(&flat_input_ids)
+            .reshape(&[input_ids.len() as i64, -1])
+            .to(self.device);
+        let attention_masks_tensor = Tensor::from_slice(&flat_attention_mask)
+            .reshape(&[input_ids.len() as i64, -1])
+            .to(self.device);
 
-        let result = unsafe {
-            embedder_embed(
-                self.handle,
-                flat_input_ids.as_ptr(),
-                flat_attention_mask.as_ptr(),
-                total_samples as c_long,
-                seq_length as c_long,
-                processing_batch_size as c_long,
-                output.as_mut_ptr(),
-                output_buffer_size_in_bytes as c_long,
-            )
-        };
+        let num_batches = (total_samples + processing_batch_size - 1) / processing_batch_size;
+        let mut all_batch_embeddings = Vec::new();
+        all_batch_embeddings.reserve_exact(num_batches);
 
-        if result == 0 {
-            Ok(output
-                .chunks(self.embedding_dim)
-                .map(|chunk| chunk.to_vec())
-                .collect())
-        } else {
-            Err(E::msg(format!(
-                "Batch embedding failed with error code: {}",
-                result
-            )))
+        for batch_idx in 0..num_batches {
+            let batch_start = batch_idx * processing_batch_size;
+            let batch_end = usize::min(batch_start + processing_batch_size, total_samples);
+
+            eprintln!(
+                "Processing batch {} of {}, from {} to {}",
+                batch_idx, num_batches, batch_start, batch_end
+            );
+
+            let batch_input_ids =
+                input_ids_tensor.slice(0, Some(batch_start as i64), Some(batch_end as i64), 1);
+            let batch_attention_masks = attention_masks_tensor.slice(
+                0,
+                Some(batch_start as i64),
+                Some(batch_end as i64),
+                1,
+            );
+            let input_dict = IValue::GenericDict(vec![
+                (
+                    IValue::String("input_ids".to_string()),
+                    IValue::Tensor(batch_input_ids),
+                ),
+                (
+                    IValue::String("attention_mask".to_string()),
+                    IValue::Tensor(batch_attention_masks),
+                ),
+            ]);
+
+            let result = self.model.forward_is(&[input_dict])?;
+            let mut embeddings = None;
+            match result {
+                IValue::GenericDict(items) => {
+                    for (k, v) in items {
+                        if k == IValue::String("sentence_embedding".to_string()) {
+                            match v {
+                                IValue::Tensor(t) => embeddings = Some(t),
+                                _ => {
+                                    panic!("unexpected")
+                                }
+                            };
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    panic!("unexpected output type")
+                }
+            };
+            let batch_embeddings = embeddings.unwrap();
+            all_batch_embeddings.push(batch_embeddings);
         }
-    }
-}
 
-impl Drop for EmbedderModel {
-    fn drop(&mut self) {
-        if !self.handle.is_null() {
-            unsafe {
-                embedder_free_model(self.handle);
-            }
-        }
+        let embeddings = Tensor::cat(&all_batch_embeddings, 0);
+
+        let mut answer = vec![0f32; embeddings.numel()];
+
+        embeddings.copy_data(&mut answer, embeddings.numel());
+        Ok(answer)
     }
 }
 
@@ -185,11 +200,15 @@ impl TokenBatch {
     }
 }
 
-fn write_embeddings(path: &Path, embeddings: &[Vec<f32>]) -> Result<()> {
+fn write_embeddings(path: &Path, embeddings: &[f32], embedding_dim: usize) -> Result<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
 
-    for embedding in embeddings {
+    assert!(embeddings.len() % embedding_dim == 0);
+
+    let nvecs = embeddings.len() / embedding_dim;
+    for vec_idx in 0..nvecs {
+        let embedding = &embeddings[vec_idx * embedding_dim..(vec_idx + 1) * embedding_dim];
         for val in embedding {
             if *val >= 0.0 {
                 write!(writer, "  {:.8e}", val)?;
@@ -254,8 +273,8 @@ fn get_repo_root() -> PathBuf {
 
 fn get_output_path(args: &Args) -> PathBuf {
     let output_path = format!(
-        "output/{}/{}/embeddings-{}.txt",
-        args.model, args.device, args.max_seq_length
+        "output/{}/{}/embeddings-{}-{}.txt",
+        args.model, args.device, args.max_seq_length, args.batch_size
     );
     let parent = std::path::Path::new(&output_path).parent().unwrap();
     fs::create_dir_all(parent).unwrap();
@@ -379,13 +398,15 @@ fn main() -> Result<()> {
     let total_time = end_total.duration_since(start_total).as_secs_f64();
 
     // Calculate total tokens for one full run (all sequences)
-    let num_tokens = input.input_ids.iter()
+    let num_tokens = input
+        .input_ids
+        .iter()
         .map(|seq| seq.iter().filter(|&&token| token != 0).count()) // Count non-padding tokens
         .sum();
 
     let benchmark_result = BenchmarkResult {
         language: "rust".to_string(),
-        contestant: format!("libtorch-ts-{}", blas),
+        contestant: format!("tch-ts-{}", blas),
         model: args.model.clone(),
         device: args.device.to_string(),
         max_seq_length: args.max_seq_length,
@@ -407,7 +428,7 @@ fn main() -> Result<()> {
     writeln!(file, "{}", serde_json::to_string(&benchmark_result)?)?;
 
     eprintln!("Writing embeddings to file");
-    write_embeddings(&output_path, &embeddings.unwrap())?;
+    write_embeddings(&output_path, &embeddings.unwrap(), model.embedding_dim)?;
     eprintln!("Done");
     Ok(())
 }
