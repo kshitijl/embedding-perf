@@ -3,18 +3,39 @@ from pathlib import Path
 import subprocess
 import numpy as np
 import argparse
-from typing import List
 import time
 import json
-from fastembed import TextEmbedding
+from mlx.nn import Module as MlxModule
+from mlx_embeddings.utils import load
+from tqdm import tqdm
+import mlx.core as mlx
 
 
 def embed_from_tokens(
-    model: TextEmbedding,
-    sentences: List[str],
+    model: MlxModule,
+    input_ids,
+    attention_mask,
     batch_size: int,
 ) -> np.ndarray:
-    return np.array(list(model.embed(sentences, batch_size=batch_size)))
+    all_embeddings = []
+
+    num_samples = len(input_ids)
+
+    pbar = tqdm(total=num_samples, desc="Embedding sentences", unit="sentence")
+
+    for i in range(0, num_samples, batch_size):
+        batch_input_ids = input_ids[i : i + batch_size]
+        batch_attention_mask = attention_mask[i : i + batch_size]
+        all_embeddings.append(
+            np.array(
+                model(batch_input_ids, attention_mask=batch_attention_mask).text_embeds
+            )
+        )
+
+        pbar.update(len(batch_input_ids))
+
+    pbar.close()
+    return np.vstack(all_embeddings)
 
 
 def write_embeddings(embeddings: np.ndarray, embeddings_outfile: Path):
@@ -71,18 +92,27 @@ def main():
         raise ValueError(f"num runs must be at least 1, given {args.num_runs}")
 
     if args.device == "cpu":
-        pass
+        device = mlx.Device(mlx.cpu)
+    elif args.device == "metal":
+        device = mlx.Device(mlx.DeviceType.gpu)
     else:
-        raise ValueError(f"fastembed only supports cpu on macos, given {args.device}")
+        raise ValueError(f"mlx supports cpu and metal, got {args.device}")
+    mlx.set_default_device(device)
 
     print(
-        f"Benchmarking fastembed model from {args.model} on {args.device}, seq len {args.max_seq_length}, batch size {args.batch_size}"
+        f"Benchmarking mlx model from {args.model} on {args.device}, seq len {args.max_seq_length}, batch size {args.batch_size}"
     )
 
     start_total = time.time()
-    model = TextEmbedding(model_name=translate_model_name(args.model))
-    model.model.tokenizer.enable_truncation(args.max_seq_length)
+    model, tokenizer = load(translate_model_name(args.model))
     sentences = list(open(args.sentences).readlines())
+    inputs = tokenizer.batch_encode_plus(
+        sentences,
+        return_tensors="mlx",
+        padding=True,
+        truncation=True,
+        max_length=args.max_seq_length,
+    )
 
     outfile = Path(
         f"output/{args.model}/{args.device}/embeddings-{args.max_seq_length}-{args.batch_size}.txt"
@@ -99,7 +129,8 @@ def main():
         start_run = time.time()
         embeddings = embed_from_tokens(
             model,
-            sentences,
+            inputs["input_ids"],
+            inputs["attention_mask"],
             args.batch_size,
         )
         end_run = time.time()
@@ -109,11 +140,12 @@ def main():
     total_time = end_total - start_total
 
     benchmark_result = {
-        "contestant": "fastembed",
+        "contestant": "mlx",
         "language": "python",
         "os": "macos",
         "model": args.model,
         "device": args.device,
+        "runtime": "onnx",
         "max_seq_length": args.max_seq_length,
         "batch_size": args.batch_size,
         "total_time": total_time,
