@@ -2,7 +2,6 @@ use anyhow::{Error as E, Result, anyhow};
 use hf_hub::api::sync::Api as HfApi;
 use memmap2::Mmap;
 use mlx_rs::Array;
-use mlx_rs::module::Module;
 use mlx_rs::ops as mx;
 use mlx_rs::ops::indexing::IndexOp;
 use safetensors::SafeTensors;
@@ -76,6 +75,19 @@ fn load_safetensors<P: AsRef<Path>>(path: P) -> Result<HashMap<String, Array>> {
     }
 
     Ok(weights)
+}
+
+fn mean_pooling(sequence_output: &Array, attention_mask: &Array) -> Result<Array> {
+    let expanded_mask = attention_mask.expand_dims(-1)?;
+    let masked_output = sequence_output * &expanded_mask;
+    let sum_output = masked_output.sum_axis(1, false)?;
+    let mask_sum = expanded_mask.sum_axis(1, false)?;
+    Ok(sum_output / mask_sum)
+}
+
+fn normalize_embeddings(embeddings: &Array) -> Result<Array> {
+    let norm = embeddings.square()?.sum_axis(1, true)?.sqrt()?;
+    Ok(embeddings / &norm)
 }
 
 struct BertTokenizer {
@@ -363,7 +375,11 @@ struct BertIntermediate {
 }
 
 impl BertIntermediate {
-    fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>, prefix: &str) -> Result<Self> {
+    fn new(
+        _config: &ModelArgs,
+        weights: &mut HashMap<String, Array>,
+        prefix: &str,
+    ) -> Result<Self> {
         let dense_weight = param(weights, &format!("{}intermediate.dense.weight", prefix))?;
         let dense_bias = param(weights, &format!("{}intermediate.dense.bias", prefix))?;
 
@@ -395,10 +411,10 @@ struct BertOutput {
 
 impl BertOutput {
     fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>, prefix: &str) -> Result<Self> {
-        let dense_weight = (param(weights, &format!("{}output.dense.weight", prefix))?);
-        let dense_bias = (param(weights, &format!("{}output.dense.bias", prefix))?);
-        let layer_norm_weight = (param(weights, &format!("{}output.LayerNorm.weight", prefix))?);
-        let layer_norm_bias = (param(weights, &format!("{}output.LayerNorm.bias", prefix))?);
+        let dense_weight = param(weights, &format!("{}output.dense.weight", prefix))?;
+        let dense_bias = param(weights, &format!("{}output.dense.bias", prefix))?;
+        let layer_norm_weight = param(weights, &format!("{}output.LayerNorm.weight", prefix))?;
+        let layer_norm_bias = param(weights, &format!("{}output.LayerNorm.bias", prefix))?;
 
         Ok(Self {
             dense_weight,
@@ -479,7 +495,6 @@ impl BertEncoder {
 struct BertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
-    // pooler: BertPooler,
 }
 
 impl BertModel {
@@ -495,7 +510,6 @@ impl BertModel {
         }
 
         let embeddings = BertEmbeddings::new(config, &mut clean_weights)?;
-
         let encoder = BertEncoder::new(config, &mut clean_weights)?;
         Ok(Self {
             embeddings,
@@ -543,7 +557,8 @@ impl BertModel {
             .forward(embedding_output, &extended_attention_mask)?;
 
         println!("Encoder outputs\n{:?}", encoder_outputs);
-        Ok(encoder_outputs)
+        let text_embeds = normalize_embeddings(&mean_pooling(&encoder_outputs, attention_mask)?)?;
+        Ok(text_embeds)
     }
 }
 
