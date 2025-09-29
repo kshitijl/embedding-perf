@@ -1,10 +1,10 @@
 use anyhow::{Error as E, Result, anyhow};
 use hf_hub::api::sync::Api as HfApi;
 use memmap2::Mmap;
-use mlx_rs::module::{Module, Param};
+use mlx_rs::Array;
+use mlx_rs::module::Module;
 use mlx_rs::ops as mx;
 use mlx_rs::ops::indexing::IndexOp;
-use mlx_rs::{Array, Dtype};
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -138,39 +138,26 @@ impl BertTokenizer {
 }
 
 struct BertEmbeddings {
-    word_embeddings: Param<Array>,
-    position_embeddings: Param<Array>,
-    token_type_embeddings: Param<Array>,
-    layer_norm_weight: Param<Array>,
-    layer_norm_bias: Param<Array>,
+    word_embeddings: Array,
+    position_embeddings: Array,
+    token_type_embeddings: Array,
+    layer_norm_weight: Array,
+    layer_norm_bias: Array,
     layer_norm_eps: f64,
-    dropout_prob: f32,
 }
 
-fn take_param(weights: &mut HashMap<String, Array>, k: &str) -> Result<Array> {
+fn param(weights: &mut HashMap<String, Array>, k: &str) -> Result<Array> {
     weights.remove(k).ok_or(anyhow!("missing param key: {}", k))
 }
 
 impl BertEmbeddings {
     fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>) -> Result<Self> {
-        let word_embeddings = Param::new(take_param(weights, "embeddings.word_embeddings.weight")?);
-
-        let position_embeddings = Param::new(take_param(
-            weights,
-            "embeddings.position_embeddings.weight",
-        )?);
-
-        let token_type_embeddings = Param::new(take_param(
-            weights,
-            "embeddings.token_type_embeddings.weight",
-        )?);
-
-        let layer_norm_weight = Param::new(take_param(weights, "embeddings.LayerNorm.weight")?);
-
-        let layer_norm_bias = Param::new(take_param(weights, "embeddings.LayerNorm.bias")?);
-
+        let word_embeddings = param(weights, "embeddings.word_embeddings.weight")?;
+        let position_embeddings = param(weights, "embeddings.position_embeddings.weight")?;
+        let token_type_embeddings = param(weights, "embeddings.token_type_embeddings.weight")?;
+        let layer_norm_weight = param(weights, "embeddings.LayerNorm.weight")?;
+        let layer_norm_bias = param(weights, "embeddings.LayerNorm.bias")?;
         let layer_norm_eps = config.layer_norm_eps;
-        let dropout_prob = config.hidden_dropout_prob;
 
         Ok(Self {
             word_embeddings,
@@ -179,7 +166,6 @@ impl BertEmbeddings {
             layer_norm_weight,
             layer_norm_bias,
             layer_norm_eps,
-            dropout_prob,
         })
     }
 
@@ -196,8 +182,8 @@ impl BertEmbeddings {
         let embeddings = &words_embedding + &position_embeddings + &token_type_embeddings;
         let embeddings = mlx_rs::fast::layer_norm(
             &embeddings,
-            Some(&self.layer_norm_weight.value),
-            Some(&self.layer_norm_bias.value),
+            Some(&self.layer_norm_weight),
+            Some(&self.layer_norm_bias),
             self.layer_norm_eps as f32,
         )?;
 
@@ -205,9 +191,294 @@ impl BertEmbeddings {
     }
 }
 
+struct BertSelfAttention {
+    num_attention_heads: usize,
+    attention_head_size: usize,
+    all_head_size: usize,
+    query_weight: Array,
+    query_bias: Array,
+    key_weight: Array,
+    key_bias: Array,
+    value_weight: Array,
+    value_bias: Array,
+}
+
+impl BertSelfAttention {
+    fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>, prefix: &str) -> Result<Self> {
+        let num_attention_heads = config.num_attention_heads;
+        let attention_head_size = config.hidden_size / config.num_attention_heads;
+        let all_head_size = num_attention_heads * attention_head_size;
+
+        let query_weight = param(weights, &format!("{}attention.self.query.weight", prefix))?;
+        let query_bias = param(weights, &format!("{}attention.self.query.bias", prefix))?;
+        let key_weight = param(weights, &format!("{}attention.self.key.weight", prefix))?;
+        let key_bias = param(weights, &format!("{}attention.self.key.bias", prefix))?;
+        let value_weight = param(weights, &format!("{}attention.self.value.weight", prefix))?;
+        let value_bias = param(weights, &format!("{}attention.self.value.bias", prefix))?;
+
+        Ok(Self {
+            num_attention_heads,
+            attention_head_size,
+            all_head_size,
+            query_weight,
+            query_bias,
+            key_weight,
+            key_bias,
+            value_weight,
+            value_bias,
+        })
+    }
+
+    fn transpose_for_scores(&self, x: &Array) -> Result<Array> {
+        let shape = x.shape();
+        let new_shape = [
+            shape[0],
+            shape[1],
+            self.num_attention_heads as i32,
+            self.attention_head_size as i32,
+        ];
+        x.reshape(&new_shape)?
+            .transpose_axes(&[0, 2, 1, 3])
+            .map_err(E::msg)
+    }
+
+    fn forward(&self, hidden_states: &Array, attention_mask: &Array) -> Result<Array> {
+        let mixed_query_layer = mx::addmm(
+            &self.query_bias,
+            &hidden_states,
+            &self.query_weight.t(),
+            None,
+            None,
+        )?;
+        let mixed_key_layer = mx::addmm(
+            &self.key_bias,
+            &hidden_states,
+            &self.key_weight.t(),
+            None,
+            None,
+        )?;
+        let mixed_value_layer = mx::addmm(
+            &self.value_bias,
+            &hidden_states,
+            &self.value_weight.t(),
+            None,
+            None,
+        )?;
+
+        let query_layer = self.transpose_for_scores(&mixed_query_layer)?;
+        let key_layer = self.transpose_for_scores(&mixed_key_layer)?;
+        let value_layer = self.transpose_for_scores(&mixed_value_layer)?;
+
+        let mut attention_scores = query_layer.matmul(&key_layer.transpose_axes(&[0, 1, 3, 2])?)?;
+        attention_scores = attention_scores / (self.attention_head_size as f32).sqrt();
+        attention_scores = attention_scores + attention_mask;
+
+        let attention_probs = mx::softmax_axis(&attention_scores, -1, None)?;
+        let context_layer = attention_probs.matmul(&value_layer)?;
+        let context_layer = context_layer.transpose_axes(&[0, 2, 1, 3])?;
+
+        let shape = context_layer.shape();
+        context_layer
+            .reshape(&[shape[0], shape[1], self.all_head_size as i32])
+            .map_err(E::msg)
+    }
+}
+
+struct BertSelfOutput {
+    dense_weight: Array,
+    dense_bias: Array,
+    layer_norm_weight: Array,
+    layer_norm_bias: Array,
+    layer_norm_eps: f32,
+}
+
+impl BertSelfOutput {
+    fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>, prefix: &str) -> Result<Self> {
+        let dense_weight = param(weights, &format!("{}attention.output.dense.weight", prefix))?;
+        let dense_bias = param(weights, &format!("{}attention.output.dense.bias", prefix))?;
+        let layer_norm_weight = param(
+            weights,
+            &format!("{}attention.output.LayerNorm.weight", prefix),
+        )?;
+        let layer_norm_bias = param(
+            weights,
+            &format!("{}attention.output.LayerNorm.bias", prefix),
+        )?;
+
+        Ok(Self {
+            dense_weight,
+            dense_bias,
+            layer_norm_weight,
+            layer_norm_bias,
+            layer_norm_eps: config.layer_norm_eps as f32,
+        })
+    }
+
+    fn forward(&self, hidden_states: &Array, input_tensor: &Array) -> Result<Array> {
+        let hidden_states = mx::addmm(
+            &self.dense_bias,
+            hidden_states,
+            &self.dense_weight.t(),
+            None,
+            None,
+        )?;
+        let residual = &hidden_states + input_tensor;
+
+        let output = mlx_rs::fast::layer_norm(
+            residual,
+            Some(&self.layer_norm_weight),
+            Some(&self.layer_norm_bias),
+            self.layer_norm_eps,
+        )?;
+
+        Ok(output)
+    }
+}
+
+struct BertAttention {
+    self_attention: BertSelfAttention,
+    output: BertSelfOutput,
+}
+
+impl BertAttention {
+    fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>, prefix: &str) -> Result<Self> {
+        let self_attention = BertSelfAttention::new(config, weights, prefix)?;
+        let output = BertSelfOutput::new(config, weights, prefix)?;
+
+        Ok(Self {
+            self_attention,
+            output,
+        })
+    }
+
+    fn forward(&self, hidden_states: &Array, attention_mask: &Array) -> Result<Array> {
+        let self_outputs = self.self_attention.forward(hidden_states, attention_mask)?;
+        self.output.forward(&self_outputs, hidden_states)
+    }
+}
+
+struct BertIntermediate {
+    dense_weight: Array,
+    dense_bias: Array,
+}
+
+impl BertIntermediate {
+    fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>, prefix: &str) -> Result<Self> {
+        let dense_weight = param(weights, &format!("{}intermediate.dense.weight", prefix))?;
+        let dense_bias = param(weights, &format!("{}intermediate.dense.bias", prefix))?;
+
+        Ok(Self {
+            dense_weight,
+            dense_bias,
+        })
+    }
+
+    fn forward(&self, hidden_states: &Array) -> Result<Array> {
+        let hidden_states = mx::addmm(
+            &self.dense_bias,
+            hidden_states,
+            &self.dense_weight.t(),
+            None,
+            None,
+        )?;
+        mlx_rs::nn::gelu(&hidden_states).map_err(E::msg)
+    }
+}
+
+struct BertOutput {
+    dense_weight: Array,
+    dense_bias: Array,
+    layer_norm_weight: Array,
+    layer_norm_bias: Array,
+    layer_norm_eps: f64,
+}
+
+impl BertOutput {
+    fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>, prefix: &str) -> Result<Self> {
+        let dense_weight = (param(weights, &format!("{}output.dense.weight", prefix))?);
+        let dense_bias = (param(weights, &format!("{}output.dense.bias", prefix))?);
+        let layer_norm_weight = (param(weights, &format!("{}output.LayerNorm.weight", prefix))?);
+        let layer_norm_bias = (param(weights, &format!("{}output.LayerNorm.bias", prefix))?);
+
+        Ok(Self {
+            dense_weight,
+            dense_bias,
+            layer_norm_weight,
+            layer_norm_bias,
+            layer_norm_eps: config.layer_norm_eps,
+        })
+    }
+
+    fn forward(&self, hidden_states: &Array, input_tensor: &Array) -> Result<Array> {
+        let hidden_states = mx::addmm(
+            &self.dense_bias,
+            hidden_states,
+            &self.dense_weight.t(),
+            None,
+            None,
+        )?;
+        let residual = &hidden_states + input_tensor;
+        let output = mlx_rs::fast::layer_norm(
+            residual,
+            Some(&self.layer_norm_weight),
+            Some(&self.layer_norm_bias),
+            self.layer_norm_eps as f32,
+        )?;
+
+        Ok(output)
+    }
+}
+
+struct BertLayer {
+    attention: BertAttention,
+    intermediate: BertIntermediate,
+    output: BertOutput,
+}
+
+impl BertLayer {
+    fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>, prefix: &str) -> Result<Self> {
+        let attention = BertAttention::new(config, weights, prefix)?;
+        let intermediate = BertIntermediate::new(config, weights, prefix)?;
+        let output = BertOutput::new(config, weights, prefix)?;
+        Ok(Self {
+            attention,
+            intermediate,
+            output,
+        })
+    }
+
+    fn forward(&self, hidden_states: &Array, attention_mask: &Array) -> Result<Array> {
+        let attention_output = self.attention.forward(hidden_states, attention_mask)?;
+        let intermediate_output = self.intermediate.forward(&attention_output)?;
+        self.output.forward(&intermediate_output, &attention_output)
+    }
+}
+
+struct BertEncoder {
+    layers: Vec<BertLayer>,
+}
+
+impl BertEncoder {
+    fn new(config: &ModelArgs, weights: &mut HashMap<String, Array>) -> Result<Self> {
+        let layers = (0..config.num_hidden_layers)
+            .map(|idx| BertLayer::new(config, weights, &format!("encoder.layer.{}.", idx)))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self { layers })
+    }
+
+    fn forward(&self, mut hidden_states: Array, attention_mask: &Array) -> Result<Array> {
+        for layer in &self.layers {
+            hidden_states = layer.forward(&hidden_states, attention_mask)?;
+        }
+
+        Ok(hidden_states)
+    }
+}
+
 struct BertModel {
     embeddings: BertEmbeddings,
-    // encoder: BertEncoder,
+    encoder: BertEncoder,
     // pooler: BertPooler,
 }
 
@@ -225,8 +496,11 @@ impl BertModel {
 
         let embeddings = BertEmbeddings::new(config, &mut clean_weights)?;
 
-        // let encoder = BertEncoder
-        Ok(Self { embeddings })
+        let encoder = BertEncoder::new(config, &mut clean_weights)?;
+        Ok(Self {
+            embeddings,
+            encoder,
+        })
     }
 
     fn load(model_name: &str) -> Result<Self> {
@@ -246,10 +520,30 @@ impl BertModel {
         Ok(model)
     }
 
+    fn get_extended_attention_mask(attention_mask: &Array) -> Result<Array> {
+        if attention_mask.ndim() != 2 {
+            return Err(anyhow!(
+                "attention mask must be 2d, got {}",
+                attention_mask.ndim()
+            ));
+        }
+
+        let extended_mask = attention_mask.expand_dims(1)?.expand_dims(1)?;
+        assert!(extended_mask.ndim() == 4);
+        let mask = (mx::ones_like(&extended_mask)? - &extended_mask) * -10_000.0;
+        Ok(mask)
+    }
+
     fn forward(&self, input_ids: &Array, attention_mask: &Array) -> Result<Array> {
         let embedding_output = self.embeddings.forward(input_ids)?;
+        println!("First layer embeddings \n{:?}", embedding_output);
+        let extended_attention_mask = Self::get_extended_attention_mask(attention_mask)?;
+        let encoder_outputs = self
+            .encoder
+            .forward(embedding_output, &extended_attention_mask)?;
 
-        Ok(embedding_output)
+        println!("Encoder outputs\n{:?}", encoder_outputs);
+        Ok(encoder_outputs)
     }
 }
 

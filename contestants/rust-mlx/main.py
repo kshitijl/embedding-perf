@@ -69,6 +69,13 @@ def main():
     print(f"input_ids {input_ids.shape} {input_ids}")
     print(f"attention_mask {attention_mask.shape} {attention_mask}")
 
+    embedding_output = model.embeddings(input_ids)
+    print(f"First layer: embeddings.\n {embedding_output}")
+
+    am = model.get_extended_attention_mask(attention_mask)
+    encoder_output = model.encoder(embedding_output, am)
+    print(f"Encoder output\n {encoder_output}")
+
     embeddings = model(input_ids, attention_mask=attention_mask)
 
     print(embeddings.text_embeds)
