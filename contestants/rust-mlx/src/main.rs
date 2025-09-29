@@ -11,6 +11,8 @@ use std::fs::{self, File};
 use std::path::Path;
 use tokenizers::{Encoding, Tokenizer};
 
+const USE_SDPA: bool = true;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelArgs {
     num_hidden_layers: usize,
@@ -279,14 +281,29 @@ impl BertSelfAttention {
 
         let query_layer = self.transpose_for_scores(&mixed_query_layer)?;
         let key_layer = self.transpose_for_scores(&mixed_key_layer)?;
+
         let value_layer = self.transpose_for_scores(&mixed_value_layer)?;
 
-        let mut attention_scores = query_layer.matmul(&key_layer.transpose_axes(&[0, 1, 3, 2])?)?;
-        attention_scores = attention_scores / (self.attention_head_size as f32).sqrt();
-        attention_scores = attention_scores + attention_mask;
+        let context_layer = if USE_SDPA {
+            mlx_rs::fast::scaled_dot_product_attention(
+                query_layer,
+                key_layer,
+                value_layer,
+                1.0 / (self.attention_head_size as f32).sqrt(),
+                Some(mlx_rs::fast::ScaledDotProductAttentionMask::Array(
+                    &attention_mask,
+                )),
+            )?
+        } else {
+            let mut attention_scores =
+                query_layer.matmul(&key_layer.transpose_axes(&[0, 1, 3, 2])?)?;
+            attention_scores = attention_scores / (self.attention_head_size as f32).sqrt();
+            attention_scores = attention_scores + attention_mask;
 
-        let attention_probs = mx::softmax_axis(&attention_scores, -1, None)?;
-        let context_layer = attention_probs.matmul(&value_layer)?;
+            let attention_probs = mx::softmax_axis(&attention_scores, -1, None)?;
+            attention_probs.matmul(&value_layer)?
+        };
+
         let context_layer = context_layer.transpose_axes(&[0, 2, 1, 3])?;
 
         let shape = context_layer.shape();
@@ -585,6 +602,7 @@ impl BertEmbedder {
             attention_mask
         );
         let output = self.model.forward(&input_ids, &attention_mask)?;
+        output.eval()?;
         Ok(output)
     }
 }
