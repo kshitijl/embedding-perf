@@ -14,20 +14,6 @@ use std::time::Instant;
 
 mod bert;
 
-// fn main() -> Result<()> {
-//     let model = BertEmbedder::load("sentence-transformers/all-MiniLM-L6-v2").unwrap();
-//     let embeddings = model
-//         .embed(vec![
-//             "The weather is lovely today.",
-//             "It's so sunny outside!",
-//             "He drove to the stadium.",
-//         ])
-//         .unwrap();
-
-//     println!("embeddings \n{:?}", embeddings);
-//     Ok(())
-// }
-
 #[derive(Serialize)]
 struct BenchmarkResult {
     contestant: String,
