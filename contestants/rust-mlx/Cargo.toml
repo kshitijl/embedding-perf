@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
+clap = { version = "4.5.48", features = ["derive"] }
 hf-hub = "0.4.3"
 memmap2 = "0.9.8"
 mlx-rs = "0.25.1"
